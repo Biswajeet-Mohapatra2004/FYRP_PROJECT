@@ -78,24 +78,40 @@ class DynamicThresholdEngine:
     and used to detect distributional drift in new inputs.
     """
 
-    # Weights for each factor (sum to 1.0)
-    W_CONFIDENCE  = 0.35
-    W_ANOMALY     = 0.30
-    W_DRIFT       = 0.20
-    W_QUALITY     = 0.15
+    # Default threshold boundaries (instance-overridable via constructor)
+    THRESHOLD_LOW  = 0.20    # below → keep as-is (was 0.35 — too high, T=0.26 never triggered)
+    THRESHOLD_MID  = 0.40    # between → upgrade to suspicious
+    THRESHOLD_HIGH = 0.65    # above → upgrade to adversarial
 
-    # Threshold boundaries
-    THRESHOLD_LOW  = 0.35    # below → keep as-is
-    THRESHOLD_MID  = 0.50    # between → upgrade to suspicious
-    THRESHOLD_HIGH = 0.70    # above → upgrade to adversarial
-
-    def __init__(self, reference_embeddings: list[list] = None):
+    def __init__(self,
+                 reference_embeddings: list = None,
+                 w_confidence: float = 0.35,
+                 w_anomaly: float    = 0.30,
+                 w_drift: float      = 0.20,
+                 w_quality: float    = 0.15,
+                 threshold_low: float  = None,
+                 threshold_mid: float  = None,
+                 threshold_high: float = None):
         """
         Args:
-            reference_embeddings: list of 512-d embedding vectors from clean
-                                  training images (used for drift calculation).
-                                  If None, drift is set to 0.0 to prevent artificial penalty.
+            reference_embeddings : list of 512-d embedding vectors from clean
+                                   training images (used for drift calculation).
+                                   If None, drift is set to 0.0.
+            w_confidence         : weight for confidence factor (default 0.35)
+            w_anomaly            : weight for anomaly score (default 0.30)
+            w_drift              : weight for embedding drift (default 0.20)
+            w_quality            : weight for image quality (default 0.15)
+            threshold_low/mid/high: override decision boundaries per-experiment
         """
+        self.W_CONFIDENCE = w_confidence
+        self.W_ANOMALY    = w_anomaly
+        self.W_DRIFT      = w_drift
+        self.W_QUALITY    = w_quality
+
+        self.THRESHOLD_LOW  = threshold_low  if threshold_low  is not None else DynamicThresholdEngine.THRESHOLD_LOW
+        self.THRESHOLD_MID  = threshold_mid  if threshold_mid  is not None else DynamicThresholdEngine.THRESHOLD_MID
+        self.THRESHOLD_HIGH = threshold_high if threshold_high is not None else DynamicThresholdEngine.THRESHOLD_HIGH
+
         self.reference_gallery: torch.Tensor | None = None
         if reference_embeddings:
             self.add_reference_embeddings(reference_embeddings)
@@ -142,7 +158,6 @@ class DynamicThresholdEngine:
         )
         T = float(np.clip(T, 0.0, 1.0))
 
-        # Adjust label based on computed threshold
         final_label = self._adjust_label(raw_pred, T)
         risk_level  = self._risk_level(T)
 
@@ -209,51 +224,53 @@ class DynamicThresholdEngine:
         try:
             import cv2
 
-            # Convert tensor to grayscale numpy
-            img = image_tensor.squeeze(0).mean(dim=0).cpu().numpy()
+            # Denormalize from ImageNet normalization before computing quality.
+            # Without this, values are ~[-2, 2] and Laplacian variance is ~0 for all images.
+            mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+            std  = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+            img = image_tensor.squeeze(0).cpu() * std + mean  # back to [0, 1]
+            img = img.mean(dim=0).numpy()                      # grayscale (H, W)
             img_uint8 = (img * 255).clip(0, 255).astype(np.uint8)
+
             lap_var = cv2.Laplacian(img_uint8, cv2.CV_64F).var()
 
-            # Normalize: variance 0 → blurry, ~500+ → sharp
+            # Normalize: variance 0 → blurry/adversarial, ~500+ → sharp/clean
             quality = float(np.clip(lap_var / 500.0, 0.0, 1.0))
             return quality
         except Exception:
             return 0.5     # fallback: neutral quality
 
-    @staticmethod
-    def _adjust_label(raw_pred: str, T: float) -> str:
+    def _adjust_label(self, raw_pred: str, T: float) -> str:
         """
-        Upgrade or downgrade the raw CNN prediction based on threshold T.
+        Upgrade the raw CNN prediction based on threshold T.
 
         Rules:
-          T < LOW   → trust CNN prediction
-          LOW ≤ T < MID → upgrade to suspicious if currently normal
-          T ≥ MID   → upgrade to adversarial
-          T ≥ HIGH  → definitely adversarial
+          T < LOW             → trust CNN prediction
+          LOW ≤ T < MID       → upgrade normal → suspicious
+          MID ≤ T < HIGH      → upgrade normal/suspicious → adversarial
+          T ≥ HIGH            → always adversarial
         """
-        if T < DynamicThresholdEngine.THRESHOLD_LOW:
+        if T < self.THRESHOLD_LOW:
             return raw_pred
 
-        if T < DynamicThresholdEngine.THRESHOLD_MID:
+        if T < self.THRESHOLD_MID:
             return "suspicious" if raw_pred == "normal" else raw_pred
 
-        if T < DynamicThresholdEngine.THRESHOLD_HIGH:
-            return "suspicious" if raw_pred != "adversarial" else "adversarial"
+        if T < self.THRESHOLD_HIGH:
+            # suspicious and normal both upgrade to adversarial at this level
+            return "adversarial" if raw_pred in ("adversarial", "suspicious") else "suspicious"
 
         return "adversarial"
 
-    @staticmethod
-    def _risk_level(T: float) -> str:
-        if T < DynamicThresholdEngine.THRESHOLD_LOW:
+    def _risk_level(self, T: float) -> str:
+        if T < self.THRESHOLD_LOW:
             return "LOW"
-        if T < DynamicThresholdEngine.THRESHOLD_MID:
+        if T < self.THRESHOLD_MID:
             return "MEDIUM"
         return "HIGH"
 
     def format_for_agent(self, decision: ThresholdDecision) -> str:
-        """
-        Format ThresholdDecision as structured text for Advocate/Judge agents.
-        """
+        """Format ThresholdDecision as structured text for Advocate/Judge agents."""
         comps = decision.threshold_components
         return (
             f"[Dynamic Threshold Engine Output]\n"
@@ -261,6 +278,7 @@ class DynamicThresholdEngine:
             f"Final Label         : {decision.final_label.upper()}\n"
             f"Risk Level          : {decision.risk_level}\n"
             f"Computed Threshold  : {decision.computed_threshold:.4f}\n"
+            f"Boundary (LOW/MID/HIGH): {self.THRESHOLD_LOW}/{self.THRESHOLD_MID}/{self.THRESHOLD_HIGH}\n"
             f"\nThreshold Components:\n"
             f"  Confidence Factor : {comps['confidence_factor']:.4f}  "
             f"(weight={comps['weights']['w_confidence']})\n"

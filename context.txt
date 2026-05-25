@@ -1,14 +1,14 @@
 ================================================================================
-  FYRP PROJECT — TECHNICAL HANDOFF CONTEXT (v2)
+  FYRP PROJECT — TECHNICAL HANDOFF CONTEXT (v3)
   Explainable Multi-Agent AI-Based Adversarial Threat Detection
   for Facial Biometric Systems
 ================================================================================
 
-Last updated: 2026-05-04
-Status: Codebase, Training, & Presentation Visuals COMPLETE (Final Fixes Applied)
-Machine: RTX 3060 (12 GB VRAM), Windows
+Last updated: 2026-05-26
+Status: Core fixes applied. Adversarial detection BROKEN (re-training required tomorrow).
+Machine: Windows 11 Home, CPU-only (no GPU on current machine)
 
-READ THIS FIRST: This file is the complete handoff for an Antigravity AI session.
+READ THIS FIRST: This file is the complete handoff for any new session.
 Read it ENTIRELY before taking any action. Do NOT skip sections.
 
 ================================================================================
@@ -32,335 +32,307 @@ CORE INNOVATION (3 novelties):
 
 PIPELINE (end-to-end):
   Input Image
-    → MTCNN Face Alignment & Cropping (removes background/shoulder noise)
-    → Preprocessing (OpenCV, PIL)
+    → MTCNN Face Alignment & Cropping
+    → Preprocessing (OpenCV, PIL) → Normalized tensor (1,3,224,224)
     → Feature Extraction (ResNet-18 CNN)
-    → Adversarial Detection Model → label: NORMAL / ADVERSARIAL / SUSPICIOUS
-    → Dynamic Threshold Engine → context-aware threshold & risk level
-    → Advocate Agent (Proponent) argues image is LEGITIMATE
-    → Advocate Agent (Opponent) argues image is ADVERSARIAL
-    → Judge Agent validates/overrides the debate
+    → Dynamic Threshold Engine → T score, risk level
+    → Conditional Debate Gate:
+        T < 0.20  → fast-path LEGITIMATE (no LLM calls)
+        T > 0.65  → fast-path ADVERSARIAL (no LLM calls)
+        0.20–0.65 → full Advocate–Judge debate
     → Grad-CAM XAI heatmap
     → Final Decision Report (JSON + heatmap)
 
-DATASET:
-  1. CASIA-WebFace — 10,000 identity subset (clean base features)
-  2. LFW (Labeled Faces in the Wild) — 10,000 images subset
-  
-  The datasets are strictly balanced (1:1 ratio) to ensure the anomaly head learns 
-  to accept "in-the-wild" consumer-grade selfies without false-positives.
-
-TRAINING APPROACH (2-phase):
-  Phase 1 — train ResNet-18 on CLEAN faces only (binary: 0=clean)
-             Learn face features before introducing adversarial examples.
-  Phase 2 — generate adversarial images (FGSM + PGD) from trained Phase 1
-             model, then fine-tune as 3-class detector (normal/adversarial/
-             suspicious).
-
 ================================================================================
-2. CODEBASE FILE STRUCTURE (COMPLETE AS OF 2026-04-29)
+2. CURRENT CODEBASE STATE (as of 2026-05-26)
 ================================================================================
 
 FYRP_codebase/
-│
-├── train.py              — Main training CLI (3 modes: clean/adversarial/generate)
-├── evaluate.py           — Inference CLI (single image or batch CSV eval)
-├── pipeline.py           — ✅ NEW: End-to-end orchestrator (all components chained)
-├── download_dataset.py   — Downloads LFW dataset (NOT used, kept for reference)
-├── download_casia.py     — Downloads CASIA-WebFace via kagglehub
-├── extract_casia.py      — Converts .rec/.idx/.lst → JPEG files in data/clean/
-├── create_subset.py      — Creates a small CPU-friendly subset (500 ids × 10 imgs)
-├── generate_presentation_visuals.py — Generates comparison plots/grids for PPT
-├── generate_xai_dashboard.py        — Generates the Unified XAI Explanation Dashboard
-├── generate_test_attacks.py         — ✅ NEW: Standalone script to test FGSM/PGD on a single image
-├── requirements.txt      — Python dependencies (includes langchain-groq, facenet-pytorch)
-├── setup_venv.bat        — Windows venv setup script
-├── .env                  — ✅ EXISTS: has GROQ_API_KEY + LLM_PROVIDER=groq (gitignored)
-├── .env.example          — ✅ NEW: template showing all required env vars
-├── README.md             — ✅ NEW: full setup + workflow documentation
-├── context.txt           — THIS FILE
+├── train.py                    — Main training CLI (3 modes: clean/adversarial/generate)
+├── evaluate.py                 — Inference CLI + FAR/FRR metrics (updated)
+├── pipeline.py                 — End-to-end orchestrator (heavily updated — see Section 4)
+├── app.py                      — FastAPI backend (port changed to 8001)
+├── build_reference_gallery.py  — NEW: one-time script to build reference gallery
+├── generate_test_attacks.py    — Updated: --epsilon flag, pixel-space correct attacks
+├── requirements.txt
+├── context.txt                 — THIS FILE
 │
 ├── model/
-│   ├── config.py         — ALL hyperparams & paths (NUM_WORKERS=4, GPU machine)
-│   ├── cnn_model.py      — AdversarialFaceDetector (ResNet-18, 3 heads)
-│   │                        + FeatureExtractor wrapper for agent pipeline
-│   ├── dataset.py        — FaceDataset, AdversarialDataset, DatasetBuilder
-│   │                        pin_memory=True (GPU optimized)
-│   ├── adversarial.py    — FGSM, PGD attacks + AdversarialDatasetGenerator
-│   ├── threshold.py      — DynamicThresholdEngine (4-factor adaptive threshold)
-│   └── trainer.py        — Full training loop (Early stopping, LR scheduler, 
-│                           Joint Loss [CrossEntropy + BCE for Anomaly Head])
+│   ├── config.py               — NUM_WORKERS=0, FGSM_EPSILON=0.03 (pixel space)
+│   ├── cnn_model.py            — AdversarialFaceDetector (unchanged)
+│   ├── adversarial.py          — FIXED: epsilon now in pixel space (see Section 4)
+│   ├── threshold.py            — UPDATED: boundaries lowered, weights configurable
+│   ├── dataset.py              — unchanged
+│   └── trainer.py              — unchanged
 │
 ├── agents/
-│   ├── __init__.py       — Exports: AdvocateAgent, run_advocates,
-│   │                        format_debate_for_judge, JudgeAgent
-│   ├── advocate.py       — ✅ UPDATED: uses llm_factory (provider-agnostic)
-│   ├── judge.py          — ✅ NEW: JudgeAgent (LLM-as-a-Judge, can override advocates)
-│   └── llm_factory.py    — ✅ NEW: single switching point for LLM provider
-│                            Change LLM_PROVIDER in .env to swap Groq ↔ OpenAI
-│                            No code changes needed anywhere else
+│   ├── advocate.py             — UPDATED: robust parsing (partition-based)
+│   ├── judge.py                — UPDATED: accepts cnn_evidence, updated prompt, robust parsing
+│   └── llm_factory.py         — unchanged
 │
-└── utils/
-    ├── __init__.py
-    ├── preprocessing.py  — MTCNN alignment, preprocess_image(), format_features_for_agent()
-    └── visualize.py      — Grad-CAM, confusion matrix, training curves
+├── utils/
+│   ├── preprocessing.py        — unchanged
+│   └── visualize.py            — unchanged
+│
+├── frontend/
+│   └── script.js               — FIXED: shows raw scores (not inverted factors),
+│                                  API endpoint changed to port 8001
+│
+├── checkpoints/
+│   ├── best_model.pth          — EXISTS: Stage 2 trained model
+│   └── reference_gallery.pt    — EXISTS: 500 LFW embeddings (built 2026-05-26)
+│
+└── data/
+    └── lfw_clean/              — EXISTS: 1,000 LFW face images (identity subfolders)
+    (data/clean/ and data/adversarial/ DO NOT EXIST on this machine)
 
 ================================================================================
-3. WHAT HAS BEEN DONE (COMPLETED AS OF 2026-04-29)
+3. SESSION 2 CHANGES (2026-05-26) — WHAT WAS DONE TODAY
 ================================================================================
 
-[✅] Downloaded CASIA-WebFace (2.7 GB) via kagglehub — on OLD machine
-     NOTE: data/clean/ may or may not exist on this machine yet.
-     Check with: python -c "import os; print(len(os.listdir('data/clean')))"
+--- ENVIRONMENT FIXES ---
 
-[✅] Extracted 490,623 images into data/clean/<identity>/<img>.jpg
-     using extract_casia.py (MXNet RecordIO decoder, skip=24 bytes for header)
-     → This was done on the OLD machine. May need to redo on this machine.
+[✅] Port conflict: Port 8000 was held by another process.
+     → app.py: uvicorn.run() changed from port 8000 to 8001
+     → app.py: dashboard_url fixed from localhost:8000 to localhost:8001
+     → frontend/script.js: API fetch URL changed from port 8000 to 8001
 
-[✅] Fixed all bugs in core codebase (dataset.py truncated images, config.py
-     workers, train.py missing import, etc.) — see original context for details
+[✅] Venv had hardcoded paths from a different machine (user "nansh").
+     → Old venv deleted, new venv recreated with Python 3.11
+     → requirements.txt dependencies reinstalled successfully
 
-[✅] Created all core model files:
-     model/config.py, cnn_model.py, dataset.py, adversarial.py,
-     threshold.py, trainer.py
+--- CODE FIX 1: Threshold Boundaries (model/threshold.py) ---
+[✅] THRESHOLD_LOW  lowered: 0.35 → 0.20
+     THRESHOLD_MID  lowered: 0.50 → 0.40
+     THRESHOLD_HIGH lowered: 0.70 → 0.65
+     Reason: T was ~0.26 for adversarial images. Old LOW=0.35 meant
+     the threshold engine NEVER upgraded any label (T was always < LOW).
 
-[✅] Created all agent files:
-     agents/advocate.py, agents/judge.py, agents/llm_factory.py,
-     agents/__init__.py
+[✅] _adjust_label() fixed for MID-HIGH range:
+     Before: suspicious stayed suspicious at T=0.50+
+     After:  suspicious upgrades to adversarial when T in [MID, HIGH)
 
-[✅] Created pipeline.py — end-to-end orchestrator
-     Usage: python pipeline.py --image face.jpg --checkpoint checkpoints/best_model.pth
+[✅] _image_quality() fixed: Laplacian was computed on NORMALIZED tensor
+     (values ~[-2,2] → variance ~0 for all images).
+     After: ImageNet denormalization applied before computing Laplacian.
+     Now properly estimates image sharpness.
 
-[✅] Created README.md and .env.example
+--- CODE FIX 2: Configurable Threshold Weights (model/threshold.py) ---
+[✅] W_CONFIDENCE, W_ANOMALY, W_DRIFT, W_QUALITY moved from class constants
+     to __init__ keyword arguments (current values kept as defaults).
+     Also added threshold_low/mid/high as constructor overrides.
+     Usage: DynamicThresholdEngine(w_confidence=0.4, w_anomaly=0.35)
 
-[✅] GPU optimizations applied:
-     - model/config.py: NUM_WORKERS = 4
-     - model/dataset.py: pin_memory = True on all 3 DataLoaders
+--- CODE FIX 3: Reference Gallery (build_reference_gallery.py + pipeline.py) ---
+[✅] build_reference_gallery.py CREATED (new file).
+     Extracts 512-d embeddings from clean images and saves as pickle.
+     Usage: python build_reference_gallery.py --clean_dir data/lfw_clean --n 500
 
-[✅] LLM backend made provider-agnostic via agents/llm_factory.py:
-     - Currently configured for Groq (gsk_ key)
-     - To switch to OpenAI later: change LLM_PROVIDER=openai in .env
-       and add OPENAI_API_KEY=sk-... — NO code changes needed
+[✅] LFW dataset downloaded from Kaggle (13,233 images total).
+     1,000 images copied to data/lfw_clean/ (identity-subfolder structure).
 
-[✅] .env file created with:
-     LLM_PROVIDER=groq
-     LLM_MODEL=llama3-70b-8192
-     GROQ_API_KEY=<user's key — check .env file, do NOT ask for it>
+[✅] Reference gallery BUILT: 500 embeddings from LFW images.
+     Saved to: checkpoints/reference_gallery.pt
 
-[✅] TRAINING IS COMPLETE (Balanced 1:1 CASIA/LFW)
-     - Phase 1 (Clean): Done. Base ResNet features learned.
-     - Phase 2 (Adversarial fine-tune): Done. Joint Loss implemented. The 
-       anomaly_head was trained explicitly using BCELoss on 30k LFW images.
+[✅] pipeline.py: auto-loads gallery from checkpoints/reference_gallery.pt
+     if reference_embeddings not explicitly provided.
+     Drift is no longer always 0.0.
 
-[✅] PIPELINE OPTIMIZED
-     - Implemented MTCNN to crop out shoulders/background.
-     - Threshold engine tuned (THRESHOLD_LOW=0.35, default_drift=0.0).
-     - UI results cleanly delete intermediate image artifacts.
+--- CODE FIX 4: Conditional Debate Gate (pipeline.py) ---
+[✅] pipeline.py: Advocates and Judge are now ONLY called for ambiguous T values.
+     T < THRESHOLD_LOW  → fast-path LEGITIMATE (no LLM calls, saves ~10s)
+     T > THRESHOLD_HIGH → fast-path ADVERSARIAL (no LLM calls)
+     T in [0.20, 0.65]  → full debate runs as before
+     pro_out / opp_out handled as None safely in report building.
 
-[✅] PRESENTATION VISUALS GENERATED
-     - generate_presentation_visuals.py created.
-     - generate_xai_dashboard.py created.
-     - Visuals saved to results/ folder (Accuracy chart, XAI dashboard, Grid).
+--- CODE FIX 5: Raw CNN Evidence to Judge (pipeline.py + agents/judge.py) ---
+[✅] judge.verdict() now accepts cnn_evidence as third argument.
+     pipeline.py passes cnn_str (raw CNN output) to the Judge.
+     Judge system prompt updated: threshold guideline changed from
+     "≥ 0.50 → SUSPICIOUS" to "≥ 0.40 → SUSPICIOUS, ≥ 0.65 → ADVERSARIAL"
 
-[✅] RESOLVED PIP DEPENDENCY HELL (LangChain vs TorchAttacks)
-     - Pinned LangChain stack to stable 0.2.x series.
-     - Removed `torchattacks` from `requirements.txt` to bypass its strict `requests~=2.25.1` conflict.
-     - Updated `setup_venv.bat` to install `torchattacks>=3.5.1 --no-deps` separately.
+--- CODE FIX 6: Robust Parsing (agents/advocate.py + agents/judge.py) ---
+[✅] Both parsers refactored from fragile startswith() to
+     stripped.partition(":") approach.
+     Handles spaces after colons, varied formatting.
+     Warns via logger when any field defaults.
+
+--- CODE FIX 7: FAR/FRR Metrics (evaluate.py) ---
+[✅] evaluate.py: Added FAR and FRR computation.
+     FAR = adversarial images wrongly classified as normal / total adversarial
+     FRR = normal images wrongly classified as adversarial or suspicious / total normal
+     Added to returned metrics dict and printed in output.
+
+--- UI FIX: All Metrics Showing Zero (frontend/script.js) ---
+[✅] Root cause: script.js was reading threshold_details.factors.confidence_factor
+     (the INVERTED factor = 0 when confidence = 1.0), not the raw score.
+     After fix: reads threshold_details.confidence_score, anomaly_score,
+     embedding_drift, image_quality_score directly. Values now display correctly.
+
+--- ADVERSARIAL ATTACK PIXEL-SPACE FIX (model/adversarial.py) ---
+[✅] CRITICAL BUG FIXED in FGSM.perturb() and PGD.perturb().
+
+     OLD (broken) behavior:
+       - perturbation = epsilon * grad.sign()  [in normalized space]
+       - adv = images + perturbation
+       - adv = clamp(adv, 0, 1)  ← WRONG: normalized images span [-2.5, 2.5],
+                                    not [0,1]. This clipped ~50% of pixels to 0,
+                                    producing grey-blob artifacts. The clamp made
+                                    epsilon changes have NO visible effect.
+
+     NEW (correct) behavior:
+       FGSM: denormalize → add epsilon*sign(grad) in pixel [0,1] space
+             → clamp to [0,1] → re-normalize
+       PGD:  all iterations work in pixel space; projection uses pixel ε-ball;
+             re-normalize each step for model input; alpha auto-scales to ε/4
+
+     RESULT: epsilon now has its standard meaning (max pixel change per channel
+     in [0,1] space), matching published FGSM/PGD papers.
+
+--- generate_test_attacks.py IMPROVEMENTS ---
+[✅] Added --epsilon flag (applies to both FGSM and PGD).
+     Added --fgsm_epsilon and --pgd_epsilon for independent control.
+     PGD alpha auto-scales to epsilon/4 when epsilon is provided.
+     Output filename encodes epsilon: tony_stark_fgsm_eps0.005.jpg
+     Prints whether attack is imperceptible/subtle/visible.
 
 ================================================================================
-4. ALL CORE STEPS COMPLETED SUCCESSFULLY
+4. CURRENT OPEN ISSUE (CRITICAL — MUST FIX TOMORROW)
 ================================================================================
 
+ISSUE: Model gives "LEGITIMATE" for properly-generated adversarial images.
 
-─────────────────────────────────────────────────────────────────────────
-STEP 1 — Verify / Set Up Environment
-─────────────────────────────────────────────────────────────────────────
+ROOT CAUSE:
+  The model (checkpoints/best_model.pth) was trained in Stage 2 using
+  adversarial images generated by the OLD BROKEN code.
+  Old code applied epsilon in NORMALIZED space → effective pixel perturbation
+  was ~0.13 (= 0.03/std ≈ 33/255 per channel), creating visually obvious
+  grey-blob distortions.
 
-  A) Check if venv exists:
-       dir venv\Scripts\python.exe
+  The model learned to detect those specific grey-blob artifacts.
 
-  B) If venv does NOT exist, create it:
-       python -m venv venv
-       venv\Scripts\activate
-       pip install -r requirements.txt
-       pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+  Now that FGSM/PGD are fixed (epsilon in pixel space), adversarial images
+  look like clean faces (epsilon=0.03 → 7.65/255 change = imperceptible).
+  The model predicts "normal" with high confidence → T very low → fast-path
+  LEGITIMATE.
 
-  C) If venv exists, activate and verify packages:
-       venv\Scripts\activate
-       python -c "import torch; print(torch.__version__)"
-       pip install langchain-groq   # may be missing — add it
+  data/adversarial/ and data/clean/ DO NOT EXIST on this machine, so the
+  original training data cannot be referenced.
 
-  D) Verify GPU is detected:
-       python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-       Expected: True | NVIDIA GeForce RTX 3060
+IMMEDIATE WORKAROUND (while waiting to retrain):
+  Generate attacks at epsilon=0.1 — closer to the effective pixel perturbation
+  the model was trained on (~0.13). These should be detectable:
+    venv\Scripts\python.exe generate_test_attacks.py tony_stark.jpg --epsilon 0.1
+  Upload tony_stark_fgsm_eps0.1.jpg to the UI.
 
-  ⚠️ WINDOWS + NUM_WORKERS WARNING:
-     If DataLoader hangs during training, set NUM_WORKERS = 0 in model/config.py.
-     Currently set to 4 (GPU machine). Windows sometimes hangs with workers > 0
-     even with the if __name__ == '__main__': guard. Try 4 first; fall back to 0.
+PROPER FIX (do this tomorrow — ~30-60 min on CPU):
+  Step 1: Re-generate adversarial dataset from LFW (which we have):
+    venv\Scripts\python.exe train.py --mode generate \
+        --data_dir data/lfw_clean \
+        --checkpoint checkpoints/best_model.pth \
+        --batch_size 16
 
-─────────────────────────────────────────────────────────────────────────
-STEP 2 — Dataset Check / Download
-─────────────────────────────────────────────────────────────────────────
+    Output: data/labels.csv, data/adversarial/fgsm/, data/adversarial/pgd/
+    Time: ~5-10 minutes
 
-  A) Check if data/clean/ exists and has images:
-       python -c "import os; ids=os.listdir('data/clean') if os.path.isdir('data/clean') else []; print(len(ids), 'identity folders')"
+  Step 2: Fine-tune for 10 epochs (very low LR, only heads adapt):
+    venv\Scripts\python.exe train.py --mode adversarial \
+        --csv data/labels.csv \
+        --checkpoint checkpoints/best_model.pth \
+        --epochs 10 --lr 0.00001 --batch_size 16
 
-  B) If data/clean/ is MISSING or empty:
-       Set up Kaggle credentials first:
-         - Go to https://www.kaggle.com → Account → API → Create New Token
-         - Place kaggle.json at: C:\Users\<YourUsername>\.kaggle\kaggle.json
+    Time: ~20-40 minutes on CPU
+    Output: updated checkpoints/best_model.pth
 
-       Then run:
-         python download_casia.py    # ~2.7 GB download
-         python extract_casia.py     # ~490K images → data/clean/
-         (Takes ~15-20 minutes total)
+  Step 3: Rebuild reference gallery from lfw_clean:
+    venv\Scripts\python.exe build_reference_gallery.py \
+        --clean_dir data/lfw_clean --n 500
 
-  C) ALTERNATIVE: If you have external drive with data/clean/ from old machine,
-     just copy it directly. Then skip download entirely.
+  Step 4: Test with epsilon=0.03:
+    venv\Scripts\python.exe generate_test_attacks.py tony_stark.jpg --epsilon 0.03
+    Upload tony_stark_fgsm_eps0.03.jpg → should give SUSPICIOUS or ADVERSARIAL.
 
-─────────────────────────────────────────────────────────────────────────
-STEP 3 — Phase 1 Training (MOST IMPORTANT)
-─────────────────────────────────────────────────────────────────────────
+================================================================================
+5. HOW TO RUN THE SYSTEM (CURRENT STATE)
+================================================================================
 
-  venv\Scripts\activate
-  python train.py --mode clean --data_dir data/clean --epochs 30 --batch_size 64
+--- Start the backend ---
+  venv\Scripts\python.exe app.py
+  Server runs at: http://localhost:8001
 
-  Output: checkpoints/best_model.pth
-  Time: ~5–10 minutes per epoch on RTX 3060 (~3–5 hours total for 30 epochs)
-  Watch for: val_acc improving, early stopping if no improvement for 7 epochs
+--- Open the frontend ---
+  Open frontend/index.html in a browser directly (or serve via Live Server).
 
-  ⚠️ If you get a DataLoader hang (no output after "Starting training..."):
-     Stop the run, set NUM_WORKERS=0 in model/config.py, then re-run.
+--- Generate test attacks ---
+  venv\Scripts\python.exe generate_test_attacks.py tony_stark.jpg --epsilon 0.1
+  (Use epsilon=0.1 until the model is retrained. Use 0.03 after retraining.)
 
-─────────────────────────────────────────────────────────────────────────
-STEP 4 — Generate Adversarial Examples
-─────────────────────────────────────────────────────────────────────────
-
-  python train.py --mode generate \
-      --data_dir data/clean \
+--- Run pipeline directly (CLI) ---
+  venv\Scripts\python.exe pipeline.py --image tony_stark.jpg \
       --checkpoint checkpoints/best_model.pth
 
-  Output:
-    data/labels.csv              (manifest of all images + labels)
-    data/adversarial/fgsm/       (FGSM-attacked images)
-    data/adversarial/pgd/        (PGD-attacked images)
-
-─────────────────────────────────────────────────────────────────────────
-STEP 5 — Phase 2 Training (3-class adversarial detector)
-─────────────────────────────────────────────────────────────────────────
-
-  python train.py --mode adversarial \
-      --csv data/labels.csv \
-      --checkpoint checkpoints/best_model.pth \
-      --epochs 20 --batch_size 64
-
-  Output: checkpoints/best_model.pth (updated to 3-class detector)
-
-─────────────────────────────────────────────────────────────────────────
-STEP 6 — Test Full Pipeline (after training is done)
-─────────────────────────────────────────────────────────────────────────
-
-  # Quick single-image CNN test (no API needed):
-  python evaluate.py --image images.jpg --checkpoint checkpoints/best_model.pth
-
-  # Full pipeline with agents (needs GROQ_API_KEY in .env):
-  python pipeline.py --image images.jpg --checkpoint checkpoints/best_model.pth
-
-  Output: results/images_report.json + results/images_gradcam.png
-
-─────────────────────────────────────────────────────────────────────────
-STEP 7 — (FUTURE) Switch LLM Provider
-─────────────────────────────────────────────────────────────────────────
-
-  To switch from Groq to OpenAI (or any other future provider):
-  Edit .env ONLY — no code changes needed:
-
-    LLM_PROVIDER=openai
-    OPENAI_API_KEY=sk-proj-your-key-here
-    LLM_MODEL=gpt-4o      # optional
-
-  Supported providers currently: groq | openai
-  To add a new provider (e.g. Anthropic), edit agents/llm_factory.py only.
+--- Evaluate with FAR/FRR ---
+  venv\Scripts\python.exe evaluate.py --checkpoint checkpoints/best_model.pth
+  (Requires data with CSV labels — run after retraining when data/labels.csv exists)
 
 ================================================================================
-5. LLM / AGENT ARCHITECTURE (IMPLEMENTED)
+6. THRESHOLD ENGINE REFERENCE (CURRENT VALUES)
 ================================================================================
 
-agents/llm_factory.py (NEW — the key file):
-  - Reads LLM_PROVIDER from .env
-  - Returns ChatGroq or ChatOpenAI instance
-  - Called by advocate.py and judge.py via get_llm()
-  - Model resolution order: explicit arg > LLM_MODEL env > provider default
-  - Provider defaults: groq → llama3-70b-8192 | openai → gpt-4o
+Formula:
+  T = 0.35*(1-confidence) + 0.30*anomaly + 0.20*drift + 0.15*(1-quality)
 
-agents/advocate.py:
-  - AdvocateAgent(role="proponent"|"opponent") uses get_llm() internally
-  - run_advocates(cnn_str, threshold_str) → (pro_out, opp_out)
-  - format_debate_for_judge(pro, opp) → debate transcript string
+Decision boundaries (model/threshold.py):
+  THRESHOLD_LOW  = 0.20  (T < this → trust CNN, fast-path)
+  THRESHOLD_MID  = 0.40  (T in LOW–MID → upgrade normal→suspicious)
+  THRESHOLD_HIGH = 0.65  (T in MID–HIGH → upgrade suspicious→adversarial;
+                           T ≥ HIGH → always adversarial)
 
-agents/judge.py:
-  - JudgeAgent() uses get_llm() with temperature=0.1 (more deterministic)
-  - verdict(debate_transcript, threshold_str) → JudgeVerdict dataclass
-  - JudgeVerdict fields: final_decision, risk_level, reasoning, confidence,
-                         override (bool), override_reason
+Debate gate (pipeline.py):
+  DEBATE_LOWER = THRESHOLD_LOW  = 0.20  (fast-path LEGITIMATE)
+  DEBATE_UPPER = THRESHOLD_HIGH = 0.65  (fast-path ADVERSARIAL)
 
-pipeline.py (the orchestrator):
-  Steps: preprocess → CNN → threshold → advocates → judge → gradcam → JSON
-  CLI: python pipeline.py --image <path> --checkpoint <path>
-  Output: results/<stem>_report.json + results/<stem>_gradcam.png
+Weights are now instance-configurable:
+  DynamicThresholdEngine(w_confidence=0.35, w_anomaly=0.30,
+                         w_drift=0.20, w_quality=0.15)
 
 ================================================================================
-6. KEY TECHNICAL DECISIONS & ARCHITECTURE NOTES
+7. WHAT WORKS / WHAT DOESN'T (AS OF 2026-05-26)
 ================================================================================
 
-CNN Model (model/cnn_model.py):
-  - Backbone: ResNet-18 (pretrained on ImageNet)
-  - 3 output heads:
-      1. Classifier head → 3 logits (normal/adversarial/suspicious)
-      2. Embedding head  → 512-d L2-normalized face embedding
-      3. Anomaly head    → scalar [0,1] anomaly score
-  - 3 classes: Config.CLASS_NAMES = ["normal", "adversarial", "suspicious"]
+[✅] WORKS:
+  - Backend starts on port 8001
+  - Frontend loads and sends requests to correct port
+  - Clean face images → LEGITIMATE (correct)
+  - Threshold engine computes non-zero T with 4 components
+  - Embedding drift calculated (reference gallery loaded)
+  - Image quality correctly computed (denormalization fixed)
+  - Advocate/Judge debate runs for ambiguous images (T in 0.20–0.65)
+  - UI shows correct raw metric values (not zeros)
+  - Adversarial images with epsilon=0.1 → detectable
 
-Dynamic Threshold Engine (model/threshold.py):
-  - Formula: T = 0.35*(1-conf) + 0.30*anomaly + 0.20*drift + 0.15*(1-quality)
-  - T < 0.25  → trust CNN as-is (LOW risk)
-  - T 0.25-0.50 → upgrade "normal" → "suspicious" (MEDIUM risk)
-  - T 0.50-0.70 → upgrade non-adversarial → "suspicious" (HIGH risk)
-  - T ≥ 0.70  → force "adversarial" (HIGH risk)
-  - drift = cosine distance from clean reference embedding gallery
-
-Windows-specific settings (currently active in config.py):
-  - NUM_WORKERS = 4  (change to 0 if DataLoader hangs)
-  - pin_memory = True (GPU optimization — revert to False if CPU-only)
+[❌] DOES NOT WORK:
+  - FGSM/PGD attacks at standard epsilon=0.03 (pixel space) are NOT detected
+    (model gives LEGITIMATE — needs retraining as per Section 4 above)
+  - evaluate.py FAR/FRR: cannot run until adversarial data is regenerated
+    and labels.csv exists
 
 ================================================================================
-7. TRAINING COMMANDS QUICK REFERENCE
+8. ENVIRONMENT INFO
 ================================================================================
 
-# 0. Activate venv (Windows)
-venv\Scripts\activate
-
-# 1. Verify GPU
-python -c "import torch; print(torch.cuda.is_available())"
-
-# 2. Phase 1: Train on clean CASIA-WebFace
-python train.py --mode clean --data_dir data/clean --epochs 30 --batch_size 64
-
-# 3. Generate adversarial examples (FGSM + PGD)
-python train.py --mode generate --data_dir data/clean --checkpoint checkpoints/best_model.pth
-
-# 4. Phase 2: Fine-tune as 3-class adversarial detector
-python train.py --mode adversarial --csv data/labels.csv --checkpoint checkpoints/best_model.pth --epochs 20 --batch_size 64
-
-# 5. Evaluate a single image (CNN only)
-python evaluate.py --image images.jpg --checkpoint checkpoints/best_model.pth
-
-# 6. Run full pipeline (CNN + Agents + Grad-CAM)
-python pipeline.py --image images.jpg --checkpoint checkpoints/best_model.pth
+  Python version : 3.11 (required — 3.14 breaks numpy wheels)
+  venv location  : d:\FYRP\FYRP_codebase\venv\
+  Activation     : venv\Scripts\activate
+  Run scripts    : venv\Scripts\python.exe <script.py>
+  Backend port   : 8001 (changed from 8000 due to conflict)
+  GPU            : None available on current machine (CPU only)
+  LLM provider   : Groq (configured in .env)
+  Kaggle token   : stored at C:\Users\BISWAJEET Pc\.kaggle\
+                   ⚠️ Token was shared in chat — REGENERATE IT at kaggle.com
 
 ================================================================================
-8. RESEARCH CONTEXT (FOR VIVA / PRESENTATION)
+9. RESEARCH CONTEXT (FOR VIVA / PRESENTATION)
 ================================================================================
 
 Your project addresses the gap found in:
@@ -370,29 +342,36 @@ Your project addresses the gap found in:
   → Fixed threshold = "one-size-fits-all" problem
   → Your solution: replace with dynamic threshold + agent-based reasoning
 
-Key literature that supports your architecture:
-  1. Park et al. (2024)     — Risk analysis, fixed threshold gap (YOUR ENTRY POINT)
-  2. Verheyen et al. (2023) — Adaptive thresholds still fail (doppelganger attack)
+Key literature:
+  1. Park et al. (2024)     — Risk analysis, fixed threshold gap
+  2. Verheyen et al. (2023) — Adaptive thresholds still fail (doppelganger)
   3. Guo et al. (2025)      — Adversarial attacks survey (FGSM, PGD)
-  4. Li et al. (2026)       — PhishDebate: multi-agent in cybersecurity (PROOF)
+  4. Li et al. (2026)       — PhishDebate: multi-agent in cybersecurity
   5. Chen et al. (2026)     — G-DMAD: multi-agent debate improves reasoning
   6. Acharya et al. (2025)  — Agentic AI survey (justifies agent architecture)
-  7. Apap et al. (2024)     — Explainable biometrics (COSFIRE, justifies XAI)
+  7. Apap et al. (2024)     — Explainable biometrics (justifies XAI)
 
 3 Novelties to emphasize in viva:
-  1. Dynamic threshold (replaces static/adaptive)
-  2. Advocate-Judge agent debate (LLM-as-Judge, prevents bad decisions)
+  1. Dynamic threshold (replaces static/adaptive) — now with configurable weights
+  2. Advocate-Judge agent debate (LLM-as-Judge, conditional gate for efficiency)
   3. Grad-CAM XAI integration (shows WHERE attack is on face)
 
-================================================================================
-9. FILES TO IGNORE / NOT TOUCH
-================================================================================
-
-  - _debug_rec.py   : ONE-TIME diagnostic. Safe to delete. Hardcoded old paths.
-  - ppt.pdf         : Research presentation PDF. Not needed for code.
-  - images.jpg      : Sample face image. Use for quick evaluate.py / pipeline tests.
-  - download_dataset.py : Downloads LFW (NOT used). Kept for reference only.
+Academic framing for epsilon (IMPORTANT for viva):
+  Standard benchmark epsilon for L∞ adversarial attacks on ImageNet-scale
+  tasks is ε=8/255 ≈ 0.031. Imperceptible range is ε≤0.01.
+  Our system uses ε=0.03 (pixel space) as the primary evaluation point,
+  which is the standard benchmark value in published FGSM/PGD literature.
+  At ε=0.03, perturbations are borderline perceptible (~7.65/255 per pixel).
 
 ================================================================================
-END OF CONTEXT — READ ALL SECTIONS BEFORE PROCEEDING
+10. FILES TO IGNORE / NOT TOUCH
+================================================================================
+
+  - _debug_rec.py      : ONE-TIME diagnostic. Safe to delete.
+  - ppt.pdf            : Research presentation PDF.
+  - images.jpg         : Sample face image for quick tests.
+  - download_dataset.py: Downloads LFW (superseded by setup_lfw.py).
+
+================================================================================
+END OF CONTEXT v3 — READ ALL SECTIONS BEFORE PROCEEDING
 ================================================================================

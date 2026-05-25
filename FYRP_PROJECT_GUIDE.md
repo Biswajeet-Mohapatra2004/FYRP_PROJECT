@@ -7,43 +7,51 @@
 
 ```
 FYRP_codebase/
-├── train.py                  # Main training script (3 modes)
-├── pipeline.py               # End-to-end inference orchestrator
-├── extract_casia.py          # Dataset extraction from RecordIO format
-├── setup_lfw.py              # Downloads & extracts LFW "in-the-wild" images
-├── download_casia.py         # Dataset downloader (Kaggle)
-├── generate_test_attacks.py  # CLI script to quickly test FGSM/PGD on an image
-├── fyrp_comprehensive_walkthrough.ipynb  # Interactive project notebook
-├── .env                      # API keys & LLM config (gitignored)
-├── .env.example              # Template for .env
+├── train.py                   # Main training script (3 modes)
+├── pipeline.py                # End-to-end inference orchestrator
+├── app.py                     # FastAPI backend server (port 8001)
+├── build_reference_gallery.py # One-time script: extract embeddings for drift calc
+├── extract_casia.py           # Dataset extraction from RecordIO format
+├── setup_lfw.py               # Downloads & extracts LFW "in-the-wild" images
+├── download_casia.py          # Dataset downloader (Kaggle)
+├── generate_test_attacks.py   # CLI: generate FGSM/PGD on a single image
+├── .env                       # API keys & LLM config (gitignored)
+├── .env.example               # Template for .env
+├── context.txt                # Full technical handoff (read this first)
 │
 ├── model/
-│   ├── config.py             # ← ALL hyperparameters live here
-│   ├── cnn_model.py          # ResNet-18 CNN architecture
-│   ├── dataset.py            # DataLoaders for clean & adversarial data
-│   ├── adversarial.py        # FGSM & PGD attack implementations
-│   ├── threshold.py          # Dynamic Threshold Engine
-│   └── trainer.py            # Training loop, early stopping, metrics
+│   ├── config.py              # ← ALL hyperparameters live here
+│   ├── cnn_model.py           # ResNet-18 CNN architecture (3 heads)
+│   ├── dataset.py             # DataLoaders for clean & adversarial data
+│   ├── adversarial.py         # FGSM & PGD (epsilon in pixel space)
+│   ├── threshold.py           # Dynamic Threshold Engine (configurable weights)
+│   └── trainer.py             # Training loop, early stopping, metrics
 │
 ├── agents/
-│   ├── llm_factory.py        # ← Single point to switch LLM providers
-│   ├── advocate.py           # Proponent & Opponent agents
-│   └── judge.py              # Judge agent (LLM-as-a-Judge)
+│   ├── llm_factory.py         # ← Single point to switch LLM providers
+│   ├── advocate.py            # Proponent & Opponent agents
+│   └── judge.py               # Judge agent (receives CNN evidence directly)
 │
 ├── utils/
-│   ├── preprocessing.py      # MTCNN alignment & tensor normalization
-│   └── visualize.py          # Grad-CAM, training curves, confusion matrix
+│   ├── preprocessing.py       # MTCNN alignment & tensor normalization
+│   └── visualize.py           # Grad-CAM, training curves, confusion matrix
+│
+├── frontend/
+│   ├── index.html             # Web UI
+│   └── script.js              # Frontend logic (API on port 8001)
 │
 ├── checkpoints/
-│   └── best_model.pth        # Saved model weights (produced by training)
+│   ├── best_model.pth         # Saved model weights
+│   └── reference_gallery.pt   # 500 LFW embeddings for drift calculation
 │
 ├── data/
-│   ├── clean/                # Clean face images (identity subfolders)
-│   └── adversarial/          # Generated FGSM/PGD images
+│   ├── lfw_clean/             # 1,000 LFW clean face images (identity subfolders)
+│   ├── clean/                 # Generated after train.py --mode generate
+│   └── adversarial/           # Generated FGSM/PGD images
 │
 └── results/
-    ├── *_report.json         # Per-image decision report
-    └── *_gradcam.png         # Grad-CAM heatmap
+    ├── *_report.json          # Per-image decision report
+    └── *_gradcam.png          # Grad-CAM heatmap
 ```
 
 ---
@@ -201,17 +209,53 @@ venv\Scripts\python.exe pipeline.py --image images.jpg --checkpoint checkpoints/
 
 ---
 
-### Step 8 — Test Attacks Independently
+### Step 7b — Build the Reference Gallery (Required for drift detection)
 
-To generate adversarial attacks on your own images dynamically outside of training:
+After training is complete, build the embedding reference gallery once:
 ```powershell
-python generate_test_attacks.py my_face.jpg
+venv\Scripts\python.exe build_reference_gallery.py --clean_dir data/lfw_clean --n 500
 ```
-This produces `my_face_fgsm.jpg` and `my_face_pgd.jpg`.
+- **Output:** `checkpoints/reference_gallery.pt`
+- **Time:** ~2 minutes on CPU
+- The gallery is auto-loaded by `pipeline.py` on every run.
+- Rebuild it after any model retraining.
 
 ---
 
-### Step 8 — (Optional) Evaluate on a Batch
+### Step 8 — Test Attacks Independently
+
+To generate adversarial attacks on your own images:
+```powershell
+# Standard benchmark (borderline perceptible — recommended after full training)
+venv\Scripts\python.exe generate_test_attacks.py my_face.jpg --epsilon 0.03
+
+# Imperceptible (requires properly-trained model to detect)
+venv\Scripts\python.exe generate_test_attacks.py my_face.jpg --epsilon 0.005
+
+# Visible (use this if model was NOT retrained after the pixel-space fix)
+venv\Scripts\python.exe generate_test_attacks.py my_face.jpg --epsilon 0.1
+```
+Output files encode epsilon in the name: `my_face_fgsm_eps0.03.jpg`, `my_face_pgd_eps0.03.jpg`
+
+> ⚠️ **Epsilon is in pixel [0,1] space** — ε=0.03 means max 7.65/255 per channel.
+> This matches the standard published definition in FGSM/PGD papers.
+
+---
+
+### Step 9 — Start the Web UI
+
+```powershell
+# Terminal 1: start backend
+venv\Scripts\python.exe app.py
+# Runs at http://localhost:8001
+
+# Terminal 2: open frontend
+# Open frontend/index.html directly in browser (or use VS Code Live Server)
+```
+
+---
+
+### Step 10 — (Optional) Evaluate on a Batch
 
 ```powershell
 venv\Scripts\python.exe evaluate.py --image images.jpg --checkpoint checkpoints/best_model.pth
@@ -367,18 +411,24 @@ The threshold formula is:
 T = 0.35*(1-confidence) + 0.30*anomaly + 0.20*drift + 0.15*(1-quality)
 ```
 
-To adjust weights (must sum to 1.0):
+Weights and boundaries are **instance-configurable** via constructor — no code edits needed:
 ```python
-class DynamicThresholdEngine:
-    W_CONFIDENCE = 0.35   # Increase if CNN confidence is very reliable
-    W_ANOMALY    = 0.30   # Increase for anomaly-heavy threat scenarios
-    W_DRIFT      = 0.20   # Increase if gallery drift is a key signal
-    W_QUALITY    = 0.15   # Increase for low-quality camera inputs
-
-    THRESHOLD_LOW  = 0.25  # Below this → trust CNN as-is (LOW risk)
-    THRESHOLD_MID  = 0.50  # Between → upgrade to SUSPICIOUS (MEDIUM risk)
-    THRESHOLD_HIGH = 0.70  # Above → force ADVERSARIAL (HIGH risk)
+engine = DynamicThresholdEngine(
+    w_confidence=0.35,   # Increase if CNN confidence is very reliable
+    w_anomaly=0.30,      # Increase for anomaly-heavy threat scenarios
+    w_drift=0.20,        # Increase if gallery drift is a key signal
+    w_quality=0.15,      # Increase for low-quality camera inputs
+    threshold_low=0.20,  # T < this → trust CNN, fast-path LEGITIMATE
+    threshold_mid=0.40,  # T in LOW–MID → upgrade normal→suspicious
+    threshold_high=0.65, # T in MID–HIGH → upgrade suspicious→adversarial
+                         # T ≥ HIGH → always adversarial
+)
 ```
+
+The **debate gate** in `pipeline.py` skips expensive LLM calls for unambiguous cases:
+- `T < 0.20` → immediate **LEGITIMATE** (no API calls)
+- `T > 0.65` → immediate **ADVERSARIAL** (no API calls)
+- `0.20 ≤ T ≤ 0.65` → full Advocate→Judge debate
 
 ---
 

@@ -80,7 +80,7 @@ Guidelines:
 - Never fabricate or infer evidence not present in the provided data
 - Be concise and technically grounded
 - A low confidence score from the CNN (<0.55) should raise suspicion even without other signals
-- A computed threshold ≥ 0.50 should strongly bias toward SUSPICIOUS or ADVERSARIAL
+- A computed threshold ≥ 0.40 indicates SUSPICIOUS. A threshold ≥ 0.65 strongly indicates ADVERSARIAL.
 
 Format your response EXACTLY as follows (each field on its own line):
 FINAL_DECISION: <LEGITIMATE / SUSPICIOUS / ADVERSARIAL>
@@ -97,6 +97,9 @@ Please evaluate the following debate and issue your final verdict.
 {debate_transcript}
 
 {threshold_info}
+
+Raw CNN Evidence (ground truth — use this to verify advocate claims):
+{cnn_evidence}
 
 Provide your structured verdict now.
 """
@@ -125,13 +128,15 @@ class JudgeAgent:
 
     def verdict(self,
                 debate_transcript: str,
-                threshold_info: str) -> JudgeVerdict:
+                threshold_info: str,
+                cnn_evidence: str = "") -> JudgeVerdict:
         """
         Issue a final verdict after reviewing the debate.
 
         Args:
             debate_transcript : formatted debate from format_debate_for_judge()
             threshold_info    : formatted string from DynamicThresholdEngine.format_for_agent()
+            cnn_evidence      : raw CNN feature string (ground truth for Judge to verify claims)
 
         Returns:
             JudgeVerdict dataclass
@@ -141,6 +146,7 @@ class JudgeAgent:
             HumanMessage(content=JUDGE_HUMAN_TEMPLATE.format(
                 debate_transcript=debate_transcript,
                 threshold_info=threshold_info,
+                cnn_evidence=cnn_evidence,
             )),
         ]
 
@@ -161,9 +167,10 @@ class JudgeAgent:
         risk_level       = "MEDIUM"
         confidence       = "medium"
         override         = False
-        override_reason  = "N/A"
+        override_reason  = ""
         reasoning_lines  = []
         in_reasoning     = False
+        used_defaults    = []
 
         for line in lines:
             stripped = line.strip()
@@ -172,45 +179,53 @@ class JudgeAgent:
                     reasoning_lines.append("")
                 continue
 
-            if stripped.startswith("FINAL_DECISION:"):
-                in_reasoning = False
-                val = stripped[len("FINAL_DECISION:"):].strip().upper()
-                if val in ("LEGITIMATE", "ADVERSARIAL", "SUSPICIOUS"):
-                    final_decision = val
+            # Use partition to handle "KEY : value" and "KEY:value" equally
+            key, sep, val = stripped.partition(":")
+            key_upper = key.strip().upper()
+            val = val.strip()
 
-            elif stripped.startswith("RISK_LEVEL:"):
+            if key_upper == "FINAL_DECISION":
                 in_reasoning = False
-                val = stripped[len("RISK_LEVEL:"):].strip().upper()
-                if val in ("LOW", "MEDIUM", "HIGH"):
-                    risk_level = val
+                if val.upper() in ("LEGITIMATE", "ADVERSARIAL", "SUSPICIOUS"):
+                    final_decision = val.upper()
 
-            elif stripped.startswith("CONFIDENCE:"):
+            elif key_upper == "RISK_LEVEL":
                 in_reasoning = False
-                confidence = stripped[len("CONFIDENCE:"):].strip().lower()
+                if val.upper() in ("LOW", "MEDIUM", "HIGH"):
+                    risk_level = val.upper()
 
-            elif stripped.startswith("OVERRIDE:"):
+            elif key_upper == "CONFIDENCE":
                 in_reasoning = False
-                val = stripped[len("OVERRIDE:"):].strip()
+                if val.lower() in ("high", "medium", "low"):
+                    confidence = val.lower()
+
+            elif key_upper == "OVERRIDE":
+                in_reasoning = False
                 override = val.lower() in ("true", "yes", "1")
 
-            elif stripped.startswith("OVERRIDE_REASON:"):
+            elif key_upper == "OVERRIDE_REASON":
                 in_reasoning = False
-                override_reason = stripped[len("OVERRIDE_REASON:"):].strip()
+                na_vals = ("n/a", "na", "none", "")
+                override_reason = "" if val.lower() in na_vals else val
 
-            elif stripped.startswith("REASONING:"):
+            elif key_upper == "REASONING":
                 in_reasoning = True
-                rest = stripped[len("REASONING:"):].strip()
-                if rest:
-                    reasoning_lines.append(rest)
+                if val:
+                    reasoning_lines.append(val)
 
             elif in_reasoning:
                 reasoning_lines.append(stripped)
 
-        reasoning = " ".join(r for r in reasoning_lines if r).strip() or raw
+        reasoning = " ".join(r for r in reasoning_lines if r).strip()
+        if not reasoning:
+            used_defaults.append("reasoning")
+            reasoning = raw
 
-        # Override reason should be empty string (not "N/A") when no override
         if not override:
             override_reason = ""
+
+        if used_defaults:
+            logger.warning(f"[JUDGE] Parser used defaults for: {used_defaults}")
 
         judge_verdict = JudgeVerdict(
             final_decision=final_decision,

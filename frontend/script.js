@@ -190,11 +190,12 @@ function populateDashboard(data) {
         tBar.style.width = `${percentage}%`;
     }, 500);
 
-    const factors = tDetails.threshold_components || {};
-    document.getElementById('cnnConf').textContent = (factors.confidence_factor || 0).toFixed(4);
-    document.getElementById('anomalyScore').textContent = (factors.anomaly_factor || 0).toFixed(4);
-    document.getElementById('driftScore').textContent = (factors.drift_factor || 0).toFixed(4);
-    document.getElementById('qualityScore').textContent = (factors.quality_factor || 0).toFixed(4);
+    // Show raw scores (not inverted factors) so values are human-readable
+    // e.g. CNN Confidence: 0.9983 means 99.83% confident, NOT 0% confident
+    document.getElementById('cnnConf').textContent = (tDetails.confidence_score || 0).toFixed(4);
+    document.getElementById('anomalyScore').textContent = (tDetails.anomaly_score || 0).toFixed(4);
+    document.getElementById('driftScore').textContent = (tDetails.embedding_drift || 0).toFixed(4);
+    document.getElementById('qualityScore').textContent = (tDetails.image_quality_score || 0).toFixed(4);
 
     // Advocates
     const advPro = data.advocate_pro || {};

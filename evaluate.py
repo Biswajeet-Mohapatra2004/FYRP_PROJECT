@@ -72,6 +72,37 @@ def batch_evaluate(csv_path: str, checkpoint: str, device: str = None):
     print(f"  Macro F1 : {metrics['f1_macro']:.2f}%")
     for cls, f1 in metrics["f1_per_class"].items():
         print(f"  {cls:12s} : {f1:.2f}%")
+
+    # ── FAR / FRR (biometric security metrics) ──────────────────────
+    # Class indices: normal=0, adversarial=1, suspicious=2
+    # FAR = adversarial images wrongly accepted as normal / total adversarial
+    # FRR = normal images wrongly rejected (flagged as adv/suspicious) / total normal
+    try:
+        from sklearn.metrics import confusion_matrix
+        import numpy as np
+
+        cm = confusion_matrix(all_labels, all_preds, labels=[0, 1, 2])
+
+        adv_row   = cm[1]           # row for adversarial class
+        adv_total = adv_row.sum()
+        FAR = adv_row[0] / adv_total if adv_total > 0 else 0.0
+
+        norm_row   = cm[0]          # row for normal class
+        norm_total = norm_row.sum()
+        FRR = (norm_row[1] + norm_row[2]) / norm_total if norm_total > 0 else 0.0
+
+        print(f"\n  ── Biometric Security Metrics ──")
+        print(f"  FAR (False Acceptance Rate) : {FAR:.4f}  ({FAR*100:.2f}%)")
+        print(f"  FRR (False Rejection Rate)  : {FRR:.4f}  ({FRR*100:.2f}%)")
+        print(f"\n  Confusion Matrix (normal / adversarial / suspicious):")
+        print(f"  {cm}")
+
+        metrics["FAR"] = round(FAR, 4)
+        metrics["FRR"] = round(FRR, 4)
+        metrics["confusion_matrix"] = cm.tolist()
+    except Exception as e:
+        print(f"  [Warning] FAR/FRR computation failed: {e}")
+
     return metrics
 
 
