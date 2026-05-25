@@ -1,0 +1,398 @@
+================================================================================
+  FYRP PROJECT — TECHNICAL HANDOFF CONTEXT (v2)
+  Explainable Multi-Agent AI-Based Adversarial Threat Detection
+  for Facial Biometric Systems
+================================================================================
+
+Last updated: 2026-05-04
+Status: Codebase, Training, & Presentation Visuals COMPLETE (Final Fixes Applied)
+Machine: RTX 3060 (12 GB VRAM), Windows
+
+READ THIS FIRST: This file is the complete handoff for an Antigravity AI session.
+Read it ENTIRELY before taking any action. Do NOT skip sections.
+
+================================================================================
+1. PROJECT OVERVIEW
+================================================================================
+
+TITLE:
+  Explainable, Multi-Agent AI-Based Adversarial Threat Detection &
+  Decision Framework for Facial Biometric Systems
+
+CORE INNOVATION (3 novelties):
+  1. Dynamic Threshold Engine — replaces static/adaptive thresholds using
+     4-factor context-aware scoring (confidence, anomaly, embedding drift,
+     image quality). Addresses the "one-size-fits-all" limitation from
+     Park et al. (2024) Risk Analysis paper.
+  2. Advocate–Judge Multi-Agent Debate — LLM-backed Proponent & Opponent
+     agents argue, a Judge agent validates. Implements LLM-as-a-Judge
+     paradigm (prevents hallucination propagation from single-agent systems).
+  3. Grad-CAM / XAI layer — shows WHERE on the face the adversarial
+     perturbation was detected.
+
+PIPELINE (end-to-end):
+  Input Image
+    → MTCNN Face Alignment & Cropping (removes background/shoulder noise)
+    → Preprocessing (OpenCV, PIL)
+    → Feature Extraction (ResNet-18 CNN)
+    → Adversarial Detection Model → label: NORMAL / ADVERSARIAL / SUSPICIOUS
+    → Dynamic Threshold Engine → context-aware threshold & risk level
+    → Advocate Agent (Proponent) argues image is LEGITIMATE
+    → Advocate Agent (Opponent) argues image is ADVERSARIAL
+    → Judge Agent validates/overrides the debate
+    → Grad-CAM XAI heatmap
+    → Final Decision Report (JSON + heatmap)
+
+DATASET:
+  1. CASIA-WebFace — 10,000 identity subset (clean base features)
+  2. LFW (Labeled Faces in the Wild) — 10,000 images subset
+  
+  The datasets are strictly balanced (1:1 ratio) to ensure the anomaly head learns 
+  to accept "in-the-wild" consumer-grade selfies without false-positives.
+
+TRAINING APPROACH (2-phase):
+  Phase 1 — train ResNet-18 on CLEAN faces only (binary: 0=clean)
+             Learn face features before introducing adversarial examples.
+  Phase 2 — generate adversarial images (FGSM + PGD) from trained Phase 1
+             model, then fine-tune as 3-class detector (normal/adversarial/
+             suspicious).
+
+================================================================================
+2. CODEBASE FILE STRUCTURE (COMPLETE AS OF 2026-04-29)
+================================================================================
+
+FYRP_codebase/
+│
+├── train.py              — Main training CLI (3 modes: clean/adversarial/generate)
+├── evaluate.py           — Inference CLI (single image or batch CSV eval)
+├── pipeline.py           — ✅ NEW: End-to-end orchestrator (all components chained)
+├── download_dataset.py   — Downloads LFW dataset (NOT used, kept for reference)
+├── download_casia.py     — Downloads CASIA-WebFace via kagglehub
+├── extract_casia.py      — Converts .rec/.idx/.lst → JPEG files in data/clean/
+├── create_subset.py      — Creates a small CPU-friendly subset (500 ids × 10 imgs)
+├── generate_presentation_visuals.py — Generates comparison plots/grids for PPT
+├── generate_xai_dashboard.py        — Generates the Unified XAI Explanation Dashboard
+├── generate_test_attacks.py         — ✅ NEW: Standalone script to test FGSM/PGD on a single image
+├── requirements.txt      — Python dependencies (includes langchain-groq, facenet-pytorch)
+├── setup_venv.bat        — Windows venv setup script
+├── .env                  — ✅ EXISTS: has GROQ_API_KEY + LLM_PROVIDER=groq (gitignored)
+├── .env.example          — ✅ NEW: template showing all required env vars
+├── README.md             — ✅ NEW: full setup + workflow documentation
+├── context.txt           — THIS FILE
+│
+├── model/
+│   ├── config.py         — ALL hyperparams & paths (NUM_WORKERS=4, GPU machine)
+│   ├── cnn_model.py      — AdversarialFaceDetector (ResNet-18, 3 heads)
+│   │                        + FeatureExtractor wrapper for agent pipeline
+│   ├── dataset.py        — FaceDataset, AdversarialDataset, DatasetBuilder
+│   │                        pin_memory=True (GPU optimized)
+│   ├── adversarial.py    — FGSM, PGD attacks + AdversarialDatasetGenerator
+│   ├── threshold.py      — DynamicThresholdEngine (4-factor adaptive threshold)
+│   └── trainer.py        — Full training loop (Early stopping, LR scheduler, 
+│                           Joint Loss [CrossEntropy + BCE for Anomaly Head])
+│
+├── agents/
+│   ├── __init__.py       — Exports: AdvocateAgent, run_advocates,
+│   │                        format_debate_for_judge, JudgeAgent
+│   ├── advocate.py       — ✅ UPDATED: uses llm_factory (provider-agnostic)
+│   ├── judge.py          — ✅ NEW: JudgeAgent (LLM-as-a-Judge, can override advocates)
+│   └── llm_factory.py    — ✅ NEW: single switching point for LLM provider
+│                            Change LLM_PROVIDER in .env to swap Groq ↔ OpenAI
+│                            No code changes needed anywhere else
+│
+└── utils/
+    ├── __init__.py
+    ├── preprocessing.py  — MTCNN alignment, preprocess_image(), format_features_for_agent()
+    └── visualize.py      — Grad-CAM, confusion matrix, training curves
+
+================================================================================
+3. WHAT HAS BEEN DONE (COMPLETED AS OF 2026-04-29)
+================================================================================
+
+[✅] Downloaded CASIA-WebFace (2.7 GB) via kagglehub — on OLD machine
+     NOTE: data/clean/ may or may not exist on this machine yet.
+     Check with: python -c "import os; print(len(os.listdir('data/clean')))"
+
+[✅] Extracted 490,623 images into data/clean/<identity>/<img>.jpg
+     using extract_casia.py (MXNet RecordIO decoder, skip=24 bytes for header)
+     → This was done on the OLD machine. May need to redo on this machine.
+
+[✅] Fixed all bugs in core codebase (dataset.py truncated images, config.py
+     workers, train.py missing import, etc.) — see original context for details
+
+[✅] Created all core model files:
+     model/config.py, cnn_model.py, dataset.py, adversarial.py,
+     threshold.py, trainer.py
+
+[✅] Created all agent files:
+     agents/advocate.py, agents/judge.py, agents/llm_factory.py,
+     agents/__init__.py
+
+[✅] Created pipeline.py — end-to-end orchestrator
+     Usage: python pipeline.py --image face.jpg --checkpoint checkpoints/best_model.pth
+
+[✅] Created README.md and .env.example
+
+[✅] GPU optimizations applied:
+     - model/config.py: NUM_WORKERS = 4
+     - model/dataset.py: pin_memory = True on all 3 DataLoaders
+
+[✅] LLM backend made provider-agnostic via agents/llm_factory.py:
+     - Currently configured for Groq (gsk_ key)
+     - To switch to OpenAI later: change LLM_PROVIDER=openai in .env
+       and add OPENAI_API_KEY=sk-... — NO code changes needed
+
+[✅] .env file created with:
+     LLM_PROVIDER=groq
+     LLM_MODEL=llama3-70b-8192
+     GROQ_API_KEY=<user's key — check .env file, do NOT ask for it>
+
+[✅] TRAINING IS COMPLETE (Balanced 1:1 CASIA/LFW)
+     - Phase 1 (Clean): Done. Base ResNet features learned.
+     - Phase 2 (Adversarial fine-tune): Done. Joint Loss implemented. The 
+       anomaly_head was trained explicitly using BCELoss on 30k LFW images.
+
+[✅] PIPELINE OPTIMIZED
+     - Implemented MTCNN to crop out shoulders/background.
+     - Threshold engine tuned (THRESHOLD_LOW=0.35, default_drift=0.0).
+     - UI results cleanly delete intermediate image artifacts.
+
+[✅] PRESENTATION VISUALS GENERATED
+     - generate_presentation_visuals.py created.
+     - generate_xai_dashboard.py created.
+     - Visuals saved to results/ folder (Accuracy chart, XAI dashboard, Grid).
+
+[✅] RESOLVED PIP DEPENDENCY HELL (LangChain vs TorchAttacks)
+     - Pinned LangChain stack to stable 0.2.x series.
+     - Removed `torchattacks` from `requirements.txt` to bypass its strict `requests~=2.25.1` conflict.
+     - Updated `setup_venv.bat` to install `torchattacks>=3.5.1 --no-deps` separately.
+
+================================================================================
+4. ALL CORE STEPS COMPLETED SUCCESSFULLY
+================================================================================
+
+
+─────────────────────────────────────────────────────────────────────────
+STEP 1 — Verify / Set Up Environment
+─────────────────────────────────────────────────────────────────────────
+
+  A) Check if venv exists:
+       dir venv\Scripts\python.exe
+
+  B) If venv does NOT exist, create it:
+       python -m venv venv
+       venv\Scripts\activate
+       pip install -r requirements.txt
+       pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+  C) If venv exists, activate and verify packages:
+       venv\Scripts\activate
+       python -c "import torch; print(torch.__version__)"
+       pip install langchain-groq   # may be missing — add it
+
+  D) Verify GPU is detected:
+       python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+       Expected: True | NVIDIA GeForce RTX 3060
+
+  ⚠️ WINDOWS + NUM_WORKERS WARNING:
+     If DataLoader hangs during training, set NUM_WORKERS = 0 in model/config.py.
+     Currently set to 4 (GPU machine). Windows sometimes hangs with workers > 0
+     even with the if __name__ == '__main__': guard. Try 4 first; fall back to 0.
+
+─────────────────────────────────────────────────────────────────────────
+STEP 2 — Dataset Check / Download
+─────────────────────────────────────────────────────────────────────────
+
+  A) Check if data/clean/ exists and has images:
+       python -c "import os; ids=os.listdir('data/clean') if os.path.isdir('data/clean') else []; print(len(ids), 'identity folders')"
+
+  B) If data/clean/ is MISSING or empty:
+       Set up Kaggle credentials first:
+         - Go to https://www.kaggle.com → Account → API → Create New Token
+         - Place kaggle.json at: C:\Users\<YourUsername>\.kaggle\kaggle.json
+
+       Then run:
+         python download_casia.py    # ~2.7 GB download
+         python extract_casia.py     # ~490K images → data/clean/
+         (Takes ~15-20 minutes total)
+
+  C) ALTERNATIVE: If you have external drive with data/clean/ from old machine,
+     just copy it directly. Then skip download entirely.
+
+─────────────────────────────────────────────────────────────────────────
+STEP 3 — Phase 1 Training (MOST IMPORTANT)
+─────────────────────────────────────────────────────────────────────────
+
+  venv\Scripts\activate
+  python train.py --mode clean --data_dir data/clean --epochs 30 --batch_size 64
+
+  Output: checkpoints/best_model.pth
+  Time: ~5–10 minutes per epoch on RTX 3060 (~3–5 hours total for 30 epochs)
+  Watch for: val_acc improving, early stopping if no improvement for 7 epochs
+
+  ⚠️ If you get a DataLoader hang (no output after "Starting training..."):
+     Stop the run, set NUM_WORKERS=0 in model/config.py, then re-run.
+
+─────────────────────────────────────────────────────────────────────────
+STEP 4 — Generate Adversarial Examples
+─────────────────────────────────────────────────────────────────────────
+
+  python train.py --mode generate \
+      --data_dir data/clean \
+      --checkpoint checkpoints/best_model.pth
+
+  Output:
+    data/labels.csv              (manifest of all images + labels)
+    data/adversarial/fgsm/       (FGSM-attacked images)
+    data/adversarial/pgd/        (PGD-attacked images)
+
+─────────────────────────────────────────────────────────────────────────
+STEP 5 — Phase 2 Training (3-class adversarial detector)
+─────────────────────────────────────────────────────────────────────────
+
+  python train.py --mode adversarial \
+      --csv data/labels.csv \
+      --checkpoint checkpoints/best_model.pth \
+      --epochs 20 --batch_size 64
+
+  Output: checkpoints/best_model.pth (updated to 3-class detector)
+
+─────────────────────────────────────────────────────────────────────────
+STEP 6 — Test Full Pipeline (after training is done)
+─────────────────────────────────────────────────────────────────────────
+
+  # Quick single-image CNN test (no API needed):
+  python evaluate.py --image images.jpg --checkpoint checkpoints/best_model.pth
+
+  # Full pipeline with agents (needs GROQ_API_KEY in .env):
+  python pipeline.py --image images.jpg --checkpoint checkpoints/best_model.pth
+
+  Output: results/images_report.json + results/images_gradcam.png
+
+─────────────────────────────────────────────────────────────────────────
+STEP 7 — (FUTURE) Switch LLM Provider
+─────────────────────────────────────────────────────────────────────────
+
+  To switch from Groq to OpenAI (or any other future provider):
+  Edit .env ONLY — no code changes needed:
+
+    LLM_PROVIDER=openai
+    OPENAI_API_KEY=sk-proj-your-key-here
+    LLM_MODEL=gpt-4o      # optional
+
+  Supported providers currently: groq | openai
+  To add a new provider (e.g. Anthropic), edit agents/llm_factory.py only.
+
+================================================================================
+5. LLM / AGENT ARCHITECTURE (IMPLEMENTED)
+================================================================================
+
+agents/llm_factory.py (NEW — the key file):
+  - Reads LLM_PROVIDER from .env
+  - Returns ChatGroq or ChatOpenAI instance
+  - Called by advocate.py and judge.py via get_llm()
+  - Model resolution order: explicit arg > LLM_MODEL env > provider default
+  - Provider defaults: groq → llama3-70b-8192 | openai → gpt-4o
+
+agents/advocate.py:
+  - AdvocateAgent(role="proponent"|"opponent") uses get_llm() internally
+  - run_advocates(cnn_str, threshold_str) → (pro_out, opp_out)
+  - format_debate_for_judge(pro, opp) → debate transcript string
+
+agents/judge.py:
+  - JudgeAgent() uses get_llm() with temperature=0.1 (more deterministic)
+  - verdict(debate_transcript, threshold_str) → JudgeVerdict dataclass
+  - JudgeVerdict fields: final_decision, risk_level, reasoning, confidence,
+                         override (bool), override_reason
+
+pipeline.py (the orchestrator):
+  Steps: preprocess → CNN → threshold → advocates → judge → gradcam → JSON
+  CLI: python pipeline.py --image <path> --checkpoint <path>
+  Output: results/<stem>_report.json + results/<stem>_gradcam.png
+
+================================================================================
+6. KEY TECHNICAL DECISIONS & ARCHITECTURE NOTES
+================================================================================
+
+CNN Model (model/cnn_model.py):
+  - Backbone: ResNet-18 (pretrained on ImageNet)
+  - 3 output heads:
+      1. Classifier head → 3 logits (normal/adversarial/suspicious)
+      2. Embedding head  → 512-d L2-normalized face embedding
+      3. Anomaly head    → scalar [0,1] anomaly score
+  - 3 classes: Config.CLASS_NAMES = ["normal", "adversarial", "suspicious"]
+
+Dynamic Threshold Engine (model/threshold.py):
+  - Formula: T = 0.35*(1-conf) + 0.30*anomaly + 0.20*drift + 0.15*(1-quality)
+  - T < 0.25  → trust CNN as-is (LOW risk)
+  - T 0.25-0.50 → upgrade "normal" → "suspicious" (MEDIUM risk)
+  - T 0.50-0.70 → upgrade non-adversarial → "suspicious" (HIGH risk)
+  - T ≥ 0.70  → force "adversarial" (HIGH risk)
+  - drift = cosine distance from clean reference embedding gallery
+
+Windows-specific settings (currently active in config.py):
+  - NUM_WORKERS = 4  (change to 0 if DataLoader hangs)
+  - pin_memory = True (GPU optimization — revert to False if CPU-only)
+
+================================================================================
+7. TRAINING COMMANDS QUICK REFERENCE
+================================================================================
+
+# 0. Activate venv (Windows)
+venv\Scripts\activate
+
+# 1. Verify GPU
+python -c "import torch; print(torch.cuda.is_available())"
+
+# 2. Phase 1: Train on clean CASIA-WebFace
+python train.py --mode clean --data_dir data/clean --epochs 30 --batch_size 64
+
+# 3. Generate adversarial examples (FGSM + PGD)
+python train.py --mode generate --data_dir data/clean --checkpoint checkpoints/best_model.pth
+
+# 4. Phase 2: Fine-tune as 3-class adversarial detector
+python train.py --mode adversarial --csv data/labels.csv --checkpoint checkpoints/best_model.pth --epochs 20 --batch_size 64
+
+# 5. Evaluate a single image (CNN only)
+python evaluate.py --image images.jpg --checkpoint checkpoints/best_model.pth
+
+# 6. Run full pipeline (CNN + Agents + Grad-CAM)
+python pipeline.py --image images.jpg --checkpoint checkpoints/best_model.pth
+
+================================================================================
+8. RESEARCH CONTEXT (FOR VIVA / PRESENTATION)
+================================================================================
+
+Your project addresses the gap found in:
+  Park et al. (2024) "A Comprehensive Risk Analysis Method for Adversarial
+  Attacks on Biometric Authentication Systems"
+  → They analyzed 7 attack surfaces × 12 scenarios using FIXED thresholds
+  → Fixed threshold = "one-size-fits-all" problem
+  → Your solution: replace with dynamic threshold + agent-based reasoning
+
+Key literature that supports your architecture:
+  1. Park et al. (2024)     — Risk analysis, fixed threshold gap (YOUR ENTRY POINT)
+  2. Verheyen et al. (2023) — Adaptive thresholds still fail (doppelganger attack)
+  3. Guo et al. (2025)      — Adversarial attacks survey (FGSM, PGD)
+  4. Li et al. (2026)       — PhishDebate: multi-agent in cybersecurity (PROOF)
+  5. Chen et al. (2026)     — G-DMAD: multi-agent debate improves reasoning
+  6. Acharya et al. (2025)  — Agentic AI survey (justifies agent architecture)
+  7. Apap et al. (2024)     — Explainable biometrics (COSFIRE, justifies XAI)
+
+3 Novelties to emphasize in viva:
+  1. Dynamic threshold (replaces static/adaptive)
+  2. Advocate-Judge agent debate (LLM-as-Judge, prevents bad decisions)
+  3. Grad-CAM XAI integration (shows WHERE attack is on face)
+
+================================================================================
+9. FILES TO IGNORE / NOT TOUCH
+================================================================================
+
+  - _debug_rec.py   : ONE-TIME diagnostic. Safe to delete. Hardcoded old paths.
+  - ppt.pdf         : Research presentation PDF. Not needed for code.
+  - images.jpg      : Sample face image. Use for quick evaluate.py / pipeline tests.
+  - download_dataset.py : Downloads LFW (NOT used). Kept for reference only.
+
+================================================================================
+END OF CONTEXT — READ ALL SECTIONS BEFORE PROCEEDING
+================================================================================

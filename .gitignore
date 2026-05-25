@@ -1,0 +1,12 @@
+venv/
+data/
+checkpoints/
+logs/
+results/
+__pycache__/
+*.py[cod]
+*.pth
+*.log
+.env
+.DS_Store
+_debug_rec.py
