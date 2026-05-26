@@ -1,126 +1,241 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Adversarial Threat Detection Dashboard</title>
+    <title>FYRP — Adversarial Threat Detection</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="theme-toggle">
-        <button id="themeBtn">☀️ Light Mode</button>
+
+    <!-- Animated background -->
+    <div class="bg-grid"></div>
+    <div class="bg-orbs">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
     </div>
+    <canvas id="particleCanvas"></canvas>
+
+    <!-- Top bar -->
+    <nav class="topbar">
+        <div class="topbar-brand">
+            <div class="brand-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            </div>
+            <span class="brand-name">FYRP<span class="brand-tag">PoC v2.0</span></span>
+        </div>
+        <div class="topbar-status">
+            <span class="status-dot"></span>
+            <span class="status-text">SYSTEM ONLINE</span>
+        </div>
+    </nav>
 
     <main class="container">
-        <header>
-            <div class="logo">🛡️ FYRP Dashboard</div>
-            <h1>Multi-Agent AI Threat Detection</h1>
-            <p>Upload a facial biometric sample to evaluate adversarial risks via dynamic thresholds and LLM-as-a-Judge validation.</p>
+
+        <!-- Hero Header -->
+        <header class="hero">
+            <div class="hero-label">RESEARCH PROTOTYPE · ADVERSARIAL AI DEFENSE</div>
+            <h1 class="hero-title">
+                <span class="title-line-1">Multi-Agent</span>
+                <span class="title-line-2">Threat Detection</span>
+            </h1>
+            <p class="hero-desc">
+                Upload a facial biometric sample. The pipeline runs CNN feature extraction →
+                dynamic threshold engine → LLM advocate debate → judge verdict with Grad-CAM explainability.
+            </p>
+            <div class="hero-chips">
+                <span class="chip">ResNet-18 CNN</span>
+                <span class="chip">Dynamic Threshold</span>
+                <span class="chip">LLM-as-a-Judge</span>
+                <span class="chip">Grad-CAM XAI</span>
+            </div>
         </header>
 
+        <!-- Upload Section -->
         <section class="upload-section">
             <div id="dropZone" class="drop-zone">
                 <input type="file" id="fileInput" accept="image/*" hidden>
-                <div class="drop-content">
-                    <span class="icon">📁</span>
-                    <h3>Drag & Drop your image here</h3>
-                    <p>or click to browse</p>
+                <div class="drop-inner">
+                    <div class="drop-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                    </div>
+                    <p class="drop-title">Drop biometric image here</p>
+                    <p class="drop-sub">or <span class="drop-link">browse files</span> · PNG, JPEG supported</p>
+                    <div class="drop-scan-line"></div>
                 </div>
                 <img id="imagePreview" class="hidden" alt="Preview">
             </div>
-            <button id="analyzeBtn" class="primary-btn" disabled>Analyze Biometric</button>
+            <button id="analyzeBtn" class="analyze-btn" disabled>
+                <span class="btn-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                </span>
+                <span class="btn-text">RUN ANALYSIS</span>
+                <span class="btn-glow"></span>
+            </button>
         </section>
 
-        <div id="loader" class="loader-container hidden">
-            <div class="spinner"></div>
-            <p>Analyzing via multi-agent debate...</p>
+        <!-- Loader -->
+        <div id="loader" class="loader-wrap hidden">
+            <div class="loader-ring">
+                <div class="ring r1"></div>
+                <div class="ring r2"></div>
+                <div class="ring r3"></div>
+                <div class="ring-core">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                </div>
+            </div>
+            <div class="loader-steps">
+                <div class="step active" id="step1">CNN Feature Extraction</div>
+                <div class="step" id="step2">Dynamic Threshold Engine</div>
+                <div class="step" id="step3">Multi-Agent Debate</div>
+                <div class="step" id="step4">Judge Verdict + Grad-CAM</div>
+            </div>
         </div>
 
-        <section id="resultsSection" class="results-section hidden">
-            <h2>Analysis Report</h2>
-            <div class="dashboard-grid">
-                
-                <!-- Summary Card -->
-                <div class="card summary-card fade-in">
-                    <h3>Final Verdict</h3>
-                    <div class="verdict-display">
-                        <span id="finalVerdictIcon" class="verdict-icon"></span>
-                        <h2 id="finalVerdictText">LEGITIMATE</h2>
+        <!-- Results -->
+        <section id="resultsSection" class="results hidden">
+
+            <div class="results-header">
+                <h2 class="results-title">Analysis Report</h2>
+                <div class="results-meta" id="resultsMeta"></div>
+            </div>
+
+            <!-- Verdict Banner -->
+            <div id="verdictBanner" class="verdict-banner fade-up">
+                <div class="vb-left">
+                    <div class="vb-icon" id="vbIcon"></div>
+                    <div class="vb-text">
+                        <div class="vb-label">FINAL VERDICT</div>
+                        <div class="vb-decision" id="vbDecision">—</div>
                     </div>
-                    <div class="badges">
-                        <span id="riskLevelBadge" class="badge">Risk: LOW</span>
-                        <span id="confidenceBadge" class="badge">Conf: HIGH</span>
+                </div>
+                <div class="vb-right">
+                    <div class="vb-badge" id="vbRisk">—</div>
+                    <div class="vb-badge" id="vbConf">—</div>
+                    <div class="vb-meta">
+                        <span>CNN: <strong id="vbCnn">—</strong></span>
+                        <span>Override: <strong id="vbOverride">—</strong></span>
                     </div>
-                    <div class="metrics">
-                        <p><strong>CNN Prediction:</strong> <span id="cnnPredText">NORMAL</span></p>
-                        <p><strong>Judge Override:</strong> <span id="overrideText">NO</span></p>
+                </div>
+                <div class="vb-scan"></div>
+            </div>
+
+            <!-- Grid -->
+            <div class="dash-grid">
+
+                <!-- XAI Dashboard -->
+                <div class="panel xai-panel fade-up delay-1">
+                    <div class="panel-header">
+                        <span class="panel-tag">XAI</span>
+                        <h3>Unified Dashboard</h3>
+                    </div>
+                    <div class="xai-frame">
+                        <img id="heatmapImage" alt="XAI Dashboard">
+                        <div class="xai-overlay-corners">
+                            <span class="corner tl"></span>
+                            <span class="corner tr"></span>
+                            <span class="corner bl"></span>
+                            <span class="corner br"></span>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Heatmap Card -->
-                <div class="card heatmap-card fade-in delay-1" style="grid-column: 1 / -1;">
-                    <h3>Unified XAI Dashboard</h3>
-                    <div class="heatmap-wrapper">
-                        <img id="heatmapImage" alt="Unified XAI Dashboard">
+                <!-- Threshold Panel -->
+                <div class="panel threshold-panel fade-up delay-2">
+                    <div class="panel-header">
+                        <span class="panel-tag">ENGINE</span>
+                        <h3>Dynamic Threshold</h3>
+                    </div>
+
+                    <div class="t-value-row">
+                        <span class="t-label">Computed T</span>
+                        <span class="t-value" id="tValue">0.0000</span>
+                    </div>
+
+                    <div class="t-track">
+                        <div class="t-zone zone-safe">SAFE</div>
+                        <div class="t-zone zone-amb">AMB</div>
+                        <div class="t-zone zone-threat">THREAT</div>
+                        <div class="t-needle" id="tNeedle"></div>
+                    </div>
+                    <div class="t-ticks">
+                        <span>0.0</span><span>0.2</span><span>0.4</span><span>0.65</span><span>1.0</span>
+                    </div>
+
+                    <div class="factor-grid">
+                        <div class="factor-box" id="fb-conf">
+                            <div class="factor-label">CNN Confidence</div>
+                            <div class="factor-bar-wrap"><div class="factor-bar" id="bar-conf"></div></div>
+                            <div class="factor-val" id="cnnConf">0.0000</div>
+                        </div>
+                        <div class="factor-box" id="fb-anom">
+                            <div class="factor-label">Anomaly Score</div>
+                            <div class="factor-bar-wrap"><div class="factor-bar" id="bar-anom"></div></div>
+                            <div class="factor-val" id="anomalyScore">0.0000</div>
+                        </div>
+                        <div class="factor-box" id="fb-drift">
+                            <div class="factor-label">Embedding Drift</div>
+                            <div class="factor-bar-wrap"><div class="factor-bar" id="bar-drift"></div></div>
+                            <div class="factor-val" id="driftScore">0.0000</div>
+                        </div>
+                        <div class="factor-box" id="fb-qual">
+                            <div class="factor-label">Image Quality</div>
+                            <div class="factor-bar-wrap"><div class="factor-bar" id="bar-qual"></div></div>
+                            <div class="factor-val" id="qualityScore">0.0000</div>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Explanation Card -->
-                <div class="card reasoning-card fade-in delay-2">
-                    <h3>Judge Reasoning</h3>
+                <!-- Judge Reasoning -->
+                <div class="panel reasoning-panel fade-up delay-3">
+                    <div class="panel-header">
+                        <span class="panel-tag">JUDGE</span>
+                        <h3>Reasoning</h3>
+                    </div>
                     <p id="judgeReasoningText" class="reasoning-text"></p>
                 </div>
 
-                <!-- Threshold Details -->
-                <div class="card threshold-card fade-in delay-3">
-                    <h3>Dynamic Threshold Details</h3>
-                    <div class="stat-row">
-                        <span>Computed Threshold (T):</span>
-                        <strong id="tValue">0.00</strong>
+                <!-- Debate Panel -->
+                <div class="panel debate-panel fade-up delay-4">
+                    <div class="panel-header">
+                        <span class="panel-tag">DEBATE</span>
+                        <h3>Multi-Agent Argument</h3>
                     </div>
-                    <div class="progress-bar-container">
-                        <div id="tBar" class="progress-bar" style="width: 0%"></div>
+                    <div class="advocate pro-card">
+                        <div class="adv-header">
+                            <div class="adv-dot dot-green"></div>
+                            <span class="adv-role">PROPONENT</span>
+                            <span class="adv-stance" id="proStance"></span>
+                        </div>
+                        <p class="adv-arg" id="proArg"></p>
                     </div>
-                    <div class="stat-grid">
-                        <div class="stat-box">
-                            <label>CNN Conf.</label>
-                            <span id="cnnConf">0.00</span>
+                    <div class="advocate opp-card">
+                        <div class="adv-header">
+                            <div class="adv-dot dot-red"></div>
+                            <span class="adv-role">OPPONENT</span>
+                            <span class="adv-stance" id="oppStance"></span>
                         </div>
-                        <div class="stat-box">
-                            <label>Anomaly</label>
-                            <span id="anomalyScore">0.00</span>
-                        </div>
-                        <div class="stat-box">
-                            <label>Drift</label>
-                            <span id="driftScore">0.00</span>
-                        </div>
-                        <div class="stat-box">
-                            <label>Quality</label>
-                            <span id="qualityScore">0.00</span>
-                        </div>
+                        <p class="adv-arg" id="oppArg"></p>
                     </div>
                 </div>
 
-                <!-- Advocates Debate -->
-                <div class="card debate-card fade-in delay-4">
-                    <h3>Multi-Agent Debate</h3>
-                    <div class="advocate proponent">
-                        <h4>🟢 Proponent Agent</h4>
-                        <p><strong>Stance:</strong> <span id="proStance"></span></p>
-                        <p class="arg" id="proArg"></p>
-                    </div>
-                    <div class="advocate opponent">
-                        <h4>🔴 Opponent Agent</h4>
-                        <p><strong>Stance:</strong> <span id="oppStance"></span></p>
-                        <p class="arg" id="oppArg"></p>
-                    </div>
-                </div>
             </div>
         </section>
     </main>
+
+    <footer class="site-footer">
+        <span>FYRP · Explainable Multi-Agent AI Adversarial Threat Detection</span>
+        <span class="footer-sep">·</span>
+        <span>Proof of Concept · Research Prototype</span>
+    </footer>
 
     <script src="script.js"></script>
 </body>
