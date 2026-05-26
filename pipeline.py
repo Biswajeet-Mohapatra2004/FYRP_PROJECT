@@ -162,23 +162,41 @@ def run_pipeline(
     pro_out = opp_out = None
 
     if T < DEBATE_LOWER:
-        # Fast-path: clearly legitimate — skip expensive LLM calls
-        if verbose:
-            logger.info(f"[4/6] Debate skipped — T={T:.4f} < LOW={DEBATE_LOWER} → fast-path LEGITIMATE")
+        # Fast-path: T is low → trust CNN prediction directly (no debate needed).
+        # Do NOT hardcode LEGITIMATE — if CNN says adversarial/suspicious, respect it.
+        # (PGD can fool the model with very high confidence → low conf_factor → low T,
+        #  but the CNN prediction itself is still the ground truth in that case.)
         from agents.judge import JudgeVerdict
+        cnn_pred = feature_dict["prediction"]  # "normal" / "adversarial" / "suspicious"
+        if cnn_pred == "normal":
+            fast_decision = "LEGITIMATE"
+            fast_risk     = "LOW"
+        elif cnn_pred == "adversarial":
+            fast_decision = "ADVERSARIAL"
+            fast_risk     = "HIGH"
+        else:
+            fast_decision = "SUSPICIOUS"
+            fast_risk     = "MEDIUM"
+
+        if verbose:
+            logger.info(
+                f"[4/6] Debate skipped — T={T:.4f} < LOW={DEBATE_LOWER} "
+                f"→ fast-path {fast_decision} (CNN={cnn_pred.upper()})"
+            )
         judge_verdict = JudgeVerdict(
-            final_decision="LEGITIMATE",
-            risk_level="LOW",
+            final_decision=fast_decision,
+            risk_level=fast_risk,
             reasoning=(
                 f"Computed threshold T={T:.4f} is below the ambiguity boundary "
-                f"({DEBATE_LOWER}). CNN prediction is trusted directly without debate."
+                f"({DEBATE_LOWER}). CNN prediction ({cnn_pred.upper()}) is trusted "
+                f"directly without debate."
             ),
             confidence="high",
             override=False,
             override_reason="",
         )
         if verbose:
-            logger.info(f"[5/6] Judge fast-path: LEGITIMATE (no debate)")
+            logger.info(f"[5/6] Judge fast-path: {fast_decision} (no debate)")
 
     elif T > DEBATE_UPPER:
         # Fast-path: clearly adversarial — skip expensive LLM calls

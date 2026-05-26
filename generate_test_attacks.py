@@ -46,7 +46,7 @@ def generate_attacks(image_path, model_path="checkpoints/best_model.pth",
 
     # Initialize attackers with the chosen epsilon
     fgsm_attacker = FGSM(model, epsilon=fgsm_eps)
-    pgd_attacker  = PGD(model,  epsilon=pgd_eps, alpha=pgd_eps / 4)
+    pgd_attacker  = PGD(model,  epsilon=pgd_eps, alpha=pgd_eps / 10)
 
     # Generate FGSM
     print("Generating FGSM attack...")
@@ -58,11 +58,11 @@ def generate_attacks(image_path, model_path="checkpoints/best_model.pth",
     pgd_adv = pgd_attacker.perturb(images, labels)
     pgd_adv_denorm = denormalize(pgd_adv[0])
 
-    # Save images — encode epsilon in filename for traceability
-    base, ext = os.path.splitext(image_path)
+    # Save as PNG (lossless) — JPEG quantization destroys PGD's structured perturbation
+    base = os.path.splitext(image_path)[0]
     eps_tag = f"_eps{fgsm_eps:.4f}".rstrip('0').rstrip('.')
-    fgsm_path = f"{base}_fgsm{eps_tag}{ext}"
-    pgd_path  = f"{base}_pgd{eps_tag}{ext}"
+    fgsm_path = f"{base}_fgsm{eps_tag}.png"
+    pgd_path  = f"{base}_pgd{eps_tag}.png"
 
     save_image(fgsm_adv_denorm, fgsm_path)
     save_image(pgd_adv_denorm, pgd_path)
