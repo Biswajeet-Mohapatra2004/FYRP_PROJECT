@@ -199,8 +199,15 @@ class DynamicThresholdEngine:
 
     def _compute_drift(self, embedding: list) -> float:
         """
-        Cosine distance from the nearest reference embedding.
-        Returns 0.0 if no gallery is available to prevent artificial penalty.
+        Cosine drift from the reference gallery.
+
+        Uses mean of top-k nearest neighbours rather than a single max.
+        Max-similarity collapses to ~0 for all images because any face will
+        find one very close gallery entry on the unit sphere — even adversarial
+        ones. Mean top-k captures population-level shift away from the clean
+        distribution, giving non-zero drift for adversarial images.
+
+        Returns 0.0 if no gallery is available.
         """
         if self.reference_gallery is None:
             return 0.0
@@ -210,9 +217,17 @@ class DynamicThresholdEngine:
 
         # Cosine similarity to all gallery vectors
         sims = (emb @ self.reference_gallery.T).squeeze(0)  # (N,)
-        max_sim = sims.max().item()
-        # Convert similarity [−1, 1] → drift [0, 1]
-        drift = (1.0 - max_sim) / 2.0
+
+        # Mean of top-10 nearest neighbours — more stable than max,
+        # more discriminative than global mean
+        k = min(10, sims.size(0))
+        top_k_mean_sim = torch.topk(sims, k).values.mean().item()
+
+        # Direct inversion: face embeddings are always positive-similarity
+        # (both vectors on the same half of the unit sphere), so no /2 needed.
+        # Clean image from same distribution: sim ~0.85–0.95 → drift ~0.05–0.15
+        # Adversarial with shifted embedding:  sim ~0.65–0.80 → drift ~0.20–0.35
+        drift = 1.0 - top_k_mean_sim
         return float(np.clip(drift, 0.0, 1.0))
 
     @staticmethod

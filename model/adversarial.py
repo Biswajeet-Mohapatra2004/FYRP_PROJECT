@@ -184,7 +184,8 @@ class AdversarialDatasetGenerator:
                  clean_loader: DataLoader,
                  output_dir: str = Config.DATA_DIR,
                  attack_types: list = None,
-                 device: str = None):
+                 device: str = None,
+                 eps_tag: str = ""):
         self.model = model
         self.loader = clean_loader
         self.output_dir = Path(output_dir)
@@ -199,13 +200,15 @@ class AdversarialDatasetGenerator:
         if "pgd" in self.attack_types:
             self.attacks["pgd"] = PGD(self.model)
 
-        # Output paths
+        # Output paths — use eps_tag to keep each epsilon run in its own folder
+        suffix = f"_{eps_tag}" if eps_tag else ""
         self.clean_dir = self.output_dir / "clean"
         self.adv_dirs = {
-            name: self.output_dir / "adversarial" / name
+            name: self.output_dir / "adversarial" / f"{name}{suffix}"
             for name in self.attacks
         }
-        self.csv_path = self.output_dir / "labels.csv"
+        csv_name = f"labels{suffix}.csv" if eps_tag else "labels.csv"
+        self.csv_path = self.output_dir / csv_name
 
     def _mkdir(self):
         self.clean_dir.mkdir(parents=True, exist_ok=True)

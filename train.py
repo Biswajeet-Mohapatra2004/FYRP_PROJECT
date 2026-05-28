@@ -68,6 +68,8 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=Config.LEARNING_RATE)
     parser.add_argument("--device", type=str, default=None,
                         help="cuda / cpu (auto-detected if not set)")
+    parser.add_argument("--epsilon", type=float, default=None,
+                        help="Override attack epsilon for generate mode (e.g. 0.01, 0.02, 0.03, 0.05)")
     return parser.parse_args()
 
 
@@ -141,6 +143,14 @@ def run_generate(args):
     if not args.checkpoint:
         raise ValueError("--checkpoint is required for generate mode.")
 
+    # Override epsilon if provided
+    if args.epsilon is not None:
+        Config.FGSM_EPSILON = args.epsilon
+        Config.PGD_EPSILON  = args.epsilon
+        logger.info(f"Epsilon override: FGSM={args.epsilon}  PGD={args.epsilon}")
+
+    eps_tag = f"eps{Config.FGSM_EPSILON:.4f}".rstrip('0').rstrip('.')
+
     # Load trained model
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     model = AdversarialFaceDetector()
@@ -161,6 +171,7 @@ def run_generate(args):
         output_dir=Config.DATA_DIR,
         attack_types=["fgsm", "pgd"],
         device=device,
+        eps_tag=eps_tag,
     )
     csv_path = generator.generate(denormalize=True)
     logger.info(f"CSV written to: {csv_path}")
