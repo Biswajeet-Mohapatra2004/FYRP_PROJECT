@@ -143,7 +143,15 @@ class DynamicThresholdEngine:
         anom_factor = anomaly
 
         # Factor 3: embedding drift
-        drift = self._compute_drift(embedding)
+        # Primary: probability-based drift — how far P(normal) is from 1.0.
+        # This is directly supervised and always meaningful.
+        # Secondary: gallery cosine drift — supplements OOD detection.
+        # Blended 70/30 because gallery embeddings cluster too tightly after
+        # retraining (L2-normalized, no contrastive loss on embedding head).
+        normal_prob = feature_dict.get("class_probabilities", {}).get("normal", 0.5)
+        prob_drift    = 1.0 - normal_prob
+        gallery_drift = self._compute_drift(embedding)
+        drift = 0.7 * prob_drift + 0.3 * gallery_drift
 
         # Factor 4: image quality
         quality = self._image_quality(image_tensor) if image_tensor is not None else 0.5
