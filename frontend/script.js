@@ -1,88 +1,158 @@
-const themeBtn = document.getElementById('themeBtn');
-const htmlEl = document.documentElement;
+/* ============================================================
+   FYRP — Dashboard Script
+   ============================================================ */
 
-themeBtn.addEventListener('click', () => {
-    const currentTheme = htmlEl.getAttribute('data-theme');
-    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    htmlEl.setAttribute('data-theme', newTheme);
-    themeBtn.textContent = newTheme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode';
-});
+// ── Particle background ──────────────────────────────────────
+(function initParticles() {
+    const canvas = document.getElementById('particleCanvas');
+    const ctx = canvas.getContext('2d');
+    let W, H, particles = [];
 
-const dropZone = document.getElementById('dropZone');
-const fileInput = document.getElementById('fileInput');
-const imagePreview = document.getElementById('imagePreview');
-const analyzeBtn = document.getElementById('analyzeBtn');
+    function resize() {
+        W = canvas.width  = window.innerWidth;
+        H = canvas.height = window.innerHeight;
+    }
 
-let selectedFile = null;
+    function Particle() {
+        this.x  = Math.random() * W;
+        this.y  = Math.random() * H;
+        this.vx = (Math.random() - 0.5) * 0.4;
+        this.vy = (Math.random() - 0.5) * 0.4;
+        this.r  = Math.random() * 1.5 + 0.3;
+        this.a  = Math.random() * 0.5 + 0.1;
+        const hues = [185, 270, 300, 220];
+        this.hue = hues[Math.floor(Math.random() * hues.length)];
+    }
 
-// Drag and drop events
-['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-    dropZone.addEventListener(eventName, preventDefaults, false);
-});
+    function init() {
+        resize();
+        particles = Array.from({length: 120}, () => new Particle());
+    }
 
-function preventDefaults(e) {
-    e.preventDefault();
-    e.stopPropagation();
+    function draw() {
+        ctx.clearRect(0, 0, W, H);
+        particles.forEach(p => {
+            p.x += p.vx; p.y += p.vy;
+            if (p.x < 0) p.x = W;
+            if (p.x > W) p.x = 0;
+            if (p.y < 0) p.y = H;
+            if (p.y > H) p.y = 0;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${p.hue}, 100%, 70%, ${p.a})`;
+            ctx.fill();
+        });
+
+        // Draw faint connection lines between close particles
+        for (let i = 0; i < particles.length; i++) {
+            for (let j = i + 1; j < particles.length; j++) {
+                const dx = particles[i].x - particles[j].x;
+                const dy = particles[i].y - particles[j].y;
+                const d  = Math.sqrt(dx*dx + dy*dy);
+                if (d < 100) {
+                    ctx.beginPath();
+                    ctx.moveTo(particles[i].x, particles[i].y);
+                    ctx.lineTo(particles[j].x, particles[j].y);
+                    ctx.strokeStyle = `rgba(0,245,255,${0.06 * (1 - d/100)})`;
+                    ctx.lineWidth = 0.5;
+                    ctx.stroke();
+                }
+            }
+        }
+        requestAnimationFrame(draw);
+    }
+
+    window.addEventListener('resize', resize);
+    init();
+    draw();
+})();
+
+
+// ── Loader step cycling ──────────────────────────────────────
+let stepTimer = null;
+const STEPS = ['step1','step2','step3','step4'];
+const STEP_DELAY = 2600;
+
+function startLoaderSteps() {
+    let i = 0;
+    STEPS.forEach(id => {
+        const el = document.getElementById(id);
+        el.classList.remove('active', 'done');
+    });
+    document.getElementById(STEPS[0]).classList.add('active');
+    stepTimer = setInterval(() => {
+        if (i < STEPS.length - 1) {
+            document.getElementById(STEPS[i]).classList.replace('active', 'done');
+            i++;
+            document.getElementById(STEPS[i]).classList.add('active');
+        }
+    }, STEP_DELAY);
 }
 
-['dragenter', 'dragover'].forEach(eventName => {
-    dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
-});
+function stopLoaderSteps() {
+    clearInterval(stepTimer);
+    STEPS.forEach(id => {
+        const el = document.getElementById(id);
+        el.classList.remove('active');
+        el.classList.add('done');
+    });
+}
 
-['dragleave', 'drop'].forEach(eventName => {
-    dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
-});
 
-dropZone.addEventListener('drop', (e) => {
-    const dt = e.dataTransfer;
-    const files = dt.files;
-    handleFiles(files);
-});
+// ── Drop zone ────────────────────────────────────────────────
+const dropZone    = document.getElementById('dropZone');
+const fileInput   = document.getElementById('fileInput');
+const imagePreview= document.getElementById('imagePreview');
+const analyzeBtn  = document.getElementById('analyzeBtn');
+let selectedFile  = null;
 
-dropZone.addEventListener('click', () => {
-    fileInput.click();
-});
+['dragenter','dragover','dragleave','drop'].forEach(ev =>
+    dropZone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); })
+);
 
-fileInput.addEventListener('change', function() {
-    handleFiles(this.files);
-});
+['dragenter','dragover'].forEach(ev =>
+    dropZone.addEventListener(ev, () => dropZone.classList.add('dragover'))
+);
+['dragleave','drop'].forEach(ev =>
+    dropZone.addEventListener(ev, () => dropZone.classList.remove('dragover'))
+);
+
+dropZone.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', function() { handleFiles(this.files); });
 
 function handleFiles(files) {
-    if (files.length > 0) {
-        selectedFile = files[0];
-        
-        if (!selectedFile.type.startsWith('image/')) {
-            alert('Please select an image file');
-            return;
-        }
-
-        const reader = new FileReader();
-        reader.readAsDataURL(selectedFile);
-        reader.onload = () => {
-            imagePreview.src = reader.result;
-            imagePreview.classList.remove('hidden');
-            analyzeBtn.disabled = false;
-        };
-    }
+    if (!files.length) return;
+    const f = files[0];
+    if (!f.type.startsWith('image/')) { alert('Please select an image file.'); return; }
+    selectedFile = f;
+    const reader = new FileReader();
+    reader.onload = e => {
+        imagePreview.src = e.target.result;
+        imagePreview.classList.remove('hidden');
+        analyzeBtn.disabled = false;
+    };
+    reader.readAsDataURL(f);
 }
 
-// Analysis Logic
-const loader = document.getElementById('loader');
+
+// ── Analyze ──────────────────────────────────────────────────
+const loader         = document.getElementById('loader');
 const resultsSection = document.getElementById('resultsSection');
 
 analyzeBtn.addEventListener('click', async () => {
     if (!selectedFile) return;
 
-    // UI State
     analyzeBtn.disabled = true;
     resultsSection.classList.add('hidden');
     loader.classList.remove('hidden');
-    
-    // Reset animations by cloning and replacing nodes
-    document.querySelectorAll('.fade-in').forEach(el => {
+    startLoaderSteps();
+
+    // Reset fade-up animations for re-runs
+    document.querySelectorAll('.fade-up').forEach(el => {
         el.style.animation = 'none';
-        el.offsetHeight; // trigger reflow
-        el.style.animation = null; 
+        el.offsetHeight;
+        el.style.animation = '';
     });
 
     const formData = new FormData();
@@ -93,116 +163,134 @@ analyzeBtn.addEventListener('click', async () => {
             method: 'POST',
             body: formData
         });
-
-        if (!response.ok) {
-            throw new Error(`Server error: ${response.statusText}`);
-        }
-
+        if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
         const data = await response.json();
         if (data.error) throw new Error(data.error);
 
+        stopLoaderSteps();
+        await new Promise(r => setTimeout(r, 400));
+
         populateDashboard(data);
-        
         loader.classList.add('hidden');
         resultsSection.classList.remove('hidden');
-
-        // Scroll to results smoothly
         resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-    } catch (error) {
-        console.error(error);
-        alert('Failed to analyze image. Check console for details. Ensure backend is running.');
+    } catch (err) {
+        console.error(err);
+        stopLoaderSteps();
         loader.classList.add('hidden');
+        alert(`Analysis failed: ${err.message}\n\nMake sure the backend is running on port 8001.`);
     } finally {
         analyzeBtn.disabled = false;
     }
 });
 
+
+// ── Populate dashboard ───────────────────────────────────────
 function populateDashboard(data) {
-    // Colors and Icons
-    const colorMap = {
-        'LEGITIMATE': 'var(--success)',
-        'SUSPICIOUS': 'var(--warning)',
-        'ADVERSARIAL': 'var(--danger)',
-        'LOW': 'var(--success)',
-        'MEDIUM': 'var(--warning)',
-        'HIGH': 'var(--danger)',
-        'high': 'var(--success)',
-        'medium': 'var(--warning)',
-        'low': 'var(--danger)'
-    };
+    const decision = (data.final_decision || 'UNKNOWN').toUpperCase();
+    const risk     = (data.risk_level     || 'UNKNOWN').toUpperCase();
+    const conf     = (data.confidence     || 'unknown').toLowerCase();
 
-    const iconMap = {
-        'LEGITIMATE': '✅',
-        'SUSPICIOUS': '⚠️',
-        'ADVERSARIAL': '🚨'
-    };
+    const decisionColor = { LEGITIMATE: 'var(--green)', SUSPICIOUS: 'var(--yellow)', ADVERSARIAL: 'var(--red)' };
+    const riskColor     = { LOW: 'var(--green)',  MEDIUM: 'var(--yellow)', HIGH: 'var(--red)' };
+    const confColor     = { high: 'var(--green)', medium: 'var(--yellow)', low: 'var(--red)' };
+    const iconMap       = { LEGITIMATE: '✅', SUSPICIOUS: '⚠️', ADVERSARIAL: '🚨' };
 
-    const dDecision = (data.final_decision || "UNKNOWN").toUpperCase();
-    const dRisk = (data.risk_level || "UNKNOWN").toUpperCase();
-    const dConf = (data.confidence || "UNKNOWN").toLowerCase();
+    // ── Verdict banner ──
+    const banner = document.getElementById('verdictBanner');
+    banner.className = 'verdict-banner fade-up';
+    banner.classList.add(`banner-${decision.toLowerCase()}`);
 
-    // Summary Card
-    const verdictText = document.getElementById('finalVerdictText');
-    verdictText.textContent = dDecision;
-    verdictText.style.color = colorMap[dDecision] || 'var(--primary)';
-    document.getElementById('finalVerdictIcon').textContent = iconMap[dDecision] || '❓';
+    document.getElementById('vbIcon').textContent = iconMap[decision] || '❓';
 
-    const riskBadge = document.getElementById('riskLevelBadge');
-    riskBadge.textContent = `Risk: ${dRisk}`;
-    riskBadge.style.color = colorMap[dRisk] || 'var(--primary)';
-    riskBadge.style.borderColor = colorMap[dRisk] || 'var(--primary)';
+    const vbDec = document.getElementById('vbDecision');
+    vbDec.textContent = decision;
+    vbDec.style.color = decisionColor[decision] || 'var(--cyan)';
 
-    const confBadge = document.getElementById('confidenceBadge');
-    confBadge.textContent = `Conf: ${dConf.toUpperCase()}`;
-    confBadge.style.color = colorMap[dConf] || 'var(--primary)';
-    confBadge.style.borderColor = colorMap[dConf] || 'var(--primary)';
+    const vbRisk = document.getElementById('vbRisk');
+    vbRisk.textContent = `RISK: ${risk}`;
+    vbRisk.style.color = riskColor[risk] || 'var(--cyan)';
 
-    document.getElementById('cnnPredText').textContent = data.cnn_prediction || "N/A";
-    document.getElementById('overrideText').textContent = data.override ? 'YES' : 'NO';
+    const vbConf = document.getElementById('vbConf');
+    vbConf.textContent = `CONF: ${conf.toUpperCase()}`;
+    vbConf.style.color = confColor[conf] || 'var(--cyan)';
 
-    // Dashboard Image
-    const heatmapImg = document.getElementById('heatmapImage');
-    if (data.dashboard_url) {
-        heatmapImg.src = data.dashboard_url + '?t=' + new Date().getTime(); // cache bust
-        heatmapImg.classList.remove('hidden');
-    } else if (data.heatmap_url) {
-        // Fallback
-        heatmapImg.src = data.heatmap_url + '?t=' + new Date().getTime();
-        heatmapImg.classList.remove('hidden');
+    document.getElementById('vbCnn').textContent = data.cnn_prediction || 'N/A';
+    document.getElementById('vbOverride').textContent = data.override ? 'YES' : 'NO';
+
+    // Timestamp meta
+    document.getElementById('resultsMeta').textContent =
+        `ANALYZED · ${new Date().toLocaleTimeString('en-US', {hour12: false})}`;
+
+    // ── XAI image ──
+    const img = document.getElementById('heatmapImage');
+    if (data.dashboard_url || data.heatmap_url) {
+        img.src = (data.dashboard_url || data.heatmap_url) + '?t=' + Date.now();
+        img.classList.remove('hidden');
     } else {
-        heatmapImg.classList.add('hidden');
+        img.classList.add('hidden');
     }
 
-    // Reasoning
-    document.getElementById('judgeReasoningText').textContent = data.reasoning || "No reasoning provided.";
+    // ── Reasoning ──
+    document.getElementById('judgeReasoningText').textContent =
+        data.reasoning || 'No reasoning provided.';
 
-    // Thresholds
-    const tDetails = data.threshold_details || {};
-    const tValue = tDetails.computed_threshold !== undefined ? tDetails.computed_threshold : (tDetails.threshold || 0);
-    
-    document.getElementById('tValue').textContent = tValue.toFixed(4);
-    
-    const percentage = Math.min(Math.max(tValue * 100, 0), 100);
-    const tBar = document.getElementById('tBar');
-    tBar.style.width = '0%'; // Reset for animation
+    // ── Threshold ──
+    const td = data.threshold_details || {};
+    const T  = td.computed_threshold !== undefined ? td.computed_threshold : 0;
+
+    const tValEl = document.getElementById('tValue');
+    tValEl.textContent = T.toFixed(4);
+    tValEl.style.color      = T < 0.2 ? 'var(--green)' : T > 0.65 ? 'var(--red)' : 'var(--yellow)';
+    tValEl.style.textShadow = T < 0.2 ? '0 0 20px var(--green)' : T > 0.65 ? '0 0 20px var(--red)' : '0 0 20px var(--yellow)';
+
+    // Needle position: track maps 0→100% to left 0→100%
+    // Zone boundaries: safe 0–0.2, amb 0.2–0.65, threat 0.65–1.0
     setTimeout(() => {
-        tBar.style.width = `${percentage}%`;
+        document.getElementById('tNeedle').style.left = `${Math.min(T * 100, 99)}%`;
+    }, 300);
+
+    // Factor bars
+    const conf_s   = td.confidence_score    || 0;
+    const anom_s   = td.anomaly_score       || 0;
+    const drift_s  = td.embedding_drift     || 0;
+    const qual_s   = td.image_quality_score || 0;
+
+    setFactor('cnnConf',     'bar-conf',  conf_s,  '%');
+    setFactor('anomalyScore','bar-anom',  anom_s,  '');
+    setFactor('driftScore',  'bar-drift', drift_s, '');
+    setFactor('qualityScore','bar-qual',  qual_s,  '');
+
+    // Color the anomaly box red if high, green if low
+    colorFactor('fb-anom', anom_s, 0.4, 0.7);
+    colorFactor('fb-drift', drift_s, 0.3, 0.6);
+
+    // ── Advocates ──
+    const pro = data.advocate_pro || {};
+    const opp = data.advocate_opp || {};
+
+    document.getElementById('proStance').textContent = pro.stance   || '—';
+    document.getElementById('proArg').textContent    = pro.argument || 'Debate skipped (fast-path).';
+    document.getElementById('oppStance').textContent = opp.stance   || '—';
+    document.getElementById('oppArg').textContent    = opp.argument || 'Debate skipped (fast-path).';
+}
+
+function setFactor(valId, barId, value, suffix) {
+    document.getElementById(valId).textContent = value.toFixed(4) + suffix;
+    setTimeout(() => {
+        document.getElementById(barId).style.width = `${Math.min(value * 100, 100)}%`;
     }, 500);
+}
 
-    const factors = tDetails.threshold_components || {};
-    document.getElementById('cnnConf').textContent = (factors.confidence_factor || 0).toFixed(4);
-    document.getElementById('anomalyScore').textContent = (factors.anomaly_factor || 0).toFixed(4);
-    document.getElementById('driftScore').textContent = (factors.drift_factor || 0).toFixed(4);
-    document.getElementById('qualityScore').textContent = (factors.quality_factor || 0).toFixed(4);
-
-    // Advocates
-    const advPro = data.advocate_pro || {};
-    const advOpp = data.advocate_opp || {};
-
-    document.getElementById('proStance').textContent = advPro.stance || "N/A";
-    document.getElementById('proArg').textContent = advPro.argument || "No argument.";
-    
-    document.getElementById('oppStance').textContent = advOpp.stance || "N/A";
-    document.getElementById('oppArg').textContent = advOpp.argument || "No argument.";
+function colorFactor(boxId, value, warnThreshold, dangerThreshold) {
+    const box = document.getElementById(boxId);
+    if (!box) return;
+    if (value >= dangerThreshold) {
+        box.style.borderColor = 'rgba(255,51,102,0.4)';
+        box.querySelector('.factor-bar').style.background = 'linear-gradient(90deg, var(--yellow), var(--red))';
+    } else if (value >= warnThreshold) {
+        box.style.borderColor = 'rgba(255,215,0,0.3)';
+        box.querySelector('.factor-bar').style.background = 'linear-gradient(90deg, var(--cyan), var(--yellow))';
+    }
 }

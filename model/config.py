@@ -46,8 +46,8 @@ class Config:
     # ──────────────────────────── Adversarial Attacks ──────────────
     FGSM_EPSILON = 0.03      # Perturbation budget for FGSM
     PGD_EPSILON = 0.03       # Perturbation budget for PGD
-    PGD_ALPHA = 0.007        # Step size for PGD
-    PGD_STEPS = 10           # Number of PGD iterations
+    PGD_ALPHA = 0.003        # Step size for PGD (≈ epsilon/10 at default epsilon=0.03)
+    PGD_STEPS = 40           # Number of PGD iterations (more steps = stronger attack)
 
     # ──────────────────────────── Thresholds ───────────────────────
     CONFIDENCE_THRESHOLD = 0.5

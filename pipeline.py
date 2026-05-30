@@ -126,7 +126,23 @@ def run_pipeline(
     # STEP 3: Dynamic Threshold Engine
     # ─────────────────────────────────────────────
     t0 = time.time()
-    engine = DynamicThresholdEngine(reference_embeddings=reference_embeddings)
+
+    # Auto-load reference gallery if not supplied by caller
+    _ref_embeddings = reference_embeddings
+    if _ref_embeddings is None:
+        import pickle
+        gallery_path = os.path.join(Config.MODEL_SAVE_DIR, "reference_gallery.pt")
+        if os.path.exists(gallery_path):
+            with open(gallery_path, "rb") as _f:
+                _ref_embeddings = pickle.load(_f)
+            logger.info(f"Loaded reference gallery: {len(_ref_embeddings)} embeddings")
+        else:
+            logger.warning(
+                "Reference gallery not found at checkpoints/reference_gallery.pt — "
+                "embedding drift will be 0.0. Run build_reference_gallery.py first."
+            )
+
+    engine = DynamicThresholdEngine(reference_embeddings=_ref_embeddings)
     threshold_decision = engine.compute(feature_dict, image_tensor=tensor)
     threshold_str = engine.format_for_agent(threshold_decision)
     if verbose:
@@ -136,35 +152,97 @@ def run_pipeline(
                     f"risk={threshold_decision.risk_level}")
 
     # ─────────────────────────────────────────────
-    # STEP 4: Advocate Agents — Proponent & Opponent
+    # STEP 4+5: Conditional Debate Gate
+    # Only invoke agents for ambiguous T values — fast-path clear-cut cases
     # ─────────────────────────────────────────────
-    t0 = time.time()
-    pro_out, opp_out = run_advocates(
-        cnn_output=cnn_str,
-        threshold_output=threshold_str,
-        model_name=model_name,
-        api_key=openai_api_key,
-    )
-    debate_transcript = format_debate_for_judge(pro_out, opp_out)
-    if verbose:
-        logger.info(f"[4/6] Advocate debate done ({time.time()-t0:.2f}s)")
-        logger.info(f"       Proponent → {pro_out.risk_assessment} | "
-                    f"Opponent → {opp_out.risk_assessment}")
+    DEBATE_LOWER = engine.THRESHOLD_LOW   # T below this → clearly legitimate
+    DEBATE_UPPER = engine.THRESHOLD_HIGH  # T above this → clearly adversarial
 
-    # ─────────────────────────────────────────────
-    # STEP 5: Judge Agent — Final Verdict
-    # ─────────────────────────────────────────────
-    t0 = time.time()
-    judge = JudgeAgent(
-        model_name=model_name,
-        temperature=0.1,
-        api_key=openai_api_key,
-    )
-    judge_verdict = judge.verdict(debate_transcript, threshold_str)
-    if verbose:
-        logger.info(f"[5/6] Judge verdict done ({time.time()-t0:.2f}s) — "
-                    f"{judge_verdict.final_decision} | "
-                    f"override={judge_verdict.override}")
+    T = threshold_decision.computed_threshold
+    pro_out = opp_out = None
+
+    if T < DEBATE_LOWER:
+        # Fast-path: T is low → trust CNN prediction directly (no debate needed).
+        # Do NOT hardcode LEGITIMATE — if CNN says adversarial/suspicious, respect it.
+        # (PGD can fool the model with very high confidence → low conf_factor → low T,
+        #  but the CNN prediction itself is still the ground truth in that case.)
+        from agents.judge import JudgeVerdict
+        cnn_pred = feature_dict["prediction"]  # "normal" / "adversarial" / "suspicious"
+        if cnn_pred == "normal":
+            fast_decision = "LEGITIMATE"
+            fast_risk     = "LOW"
+        elif cnn_pred == "adversarial":
+            fast_decision = "ADVERSARIAL"
+            fast_risk     = "HIGH"
+        else:
+            fast_decision = "SUSPICIOUS"
+            fast_risk     = "MEDIUM"
+
+        if verbose:
+            logger.info(
+                f"[4/6] Debate skipped — T={T:.4f} < LOW={DEBATE_LOWER} "
+                f"→ fast-path {fast_decision} (CNN={cnn_pred.upper()})"
+            )
+        judge_verdict = JudgeVerdict(
+            final_decision=fast_decision,
+            risk_level=fast_risk,
+            reasoning=(
+                f"Computed threshold T={T:.4f} is below the ambiguity boundary "
+                f"({DEBATE_LOWER}). CNN prediction ({cnn_pred.upper()}) is trusted "
+                f"directly without debate."
+            ),
+            confidence="high",
+            override=False,
+            override_reason="",
+        )
+        if verbose:
+            logger.info(f"[5/6] Judge fast-path: {fast_decision} (no debate)")
+
+    elif T > DEBATE_UPPER:
+        # Fast-path: clearly adversarial — skip expensive LLM calls
+        if verbose:
+            logger.info(f"[4/6] Debate skipped — T={T:.4f} > HIGH={DEBATE_UPPER} → fast-path ADVERSARIAL")
+        from agents.judge import JudgeVerdict
+        judge_verdict = JudgeVerdict(
+            final_decision="ADVERSARIAL",
+            risk_level="HIGH",
+            reasoning=(
+                f"Computed threshold T={T:.4f} exceeded the high-certainty boundary "
+                f"({DEBATE_UPPER}). Adversarial attack confirmed without debate."
+            ),
+            confidence="high",
+            override=False,
+            override_reason="",
+        )
+        if verbose:
+            logger.info(f"[5/6] Judge fast-path: ADVERSARIAL (no debate)")
+
+    else:
+        # Ambiguous range — run full multi-agent debate
+        t0 = time.time()
+        pro_out, opp_out = run_advocates(
+            cnn_output=cnn_str,
+            threshold_output=threshold_str,
+            model_name=model_name,
+            api_key=openai_api_key,
+        )
+        debate_transcript = format_debate_for_judge(pro_out, opp_out)
+        if verbose:
+            logger.info(f"[4/6] Advocate debate done ({time.time()-t0:.2f}s)")
+            logger.info(f"       Proponent → {pro_out.risk_assessment} | "
+                        f"Opponent → {opp_out.risk_assessment}")
+
+        t0 = time.time()
+        judge = JudgeAgent(
+            model_name=model_name,
+            temperature=0.1,
+            api_key=openai_api_key,
+        )
+        judge_verdict = judge.verdict(debate_transcript, threshold_str, cnn_str)
+        if verbose:
+            logger.info(f"[5/6] Judge verdict done ({time.time()-t0:.2f}s) — "
+                        f"{judge_verdict.final_decision} | "
+                        f"override={judge_verdict.override}")
 
     # ─────────────────────────────────────────────
     # STEP 6: Grad-CAM Heatmap (XAI)
@@ -213,18 +291,18 @@ def run_pipeline(
         # ── Technical details ──
         "threshold_details": threshold_decision.to_dict(),
         "advocate_pro": {
-            "stance":          pro_out.stance,
-            "risk_assessment": pro_out.risk_assessment,
-            "confidence":      pro_out.confidence,
-            "key_evidence":    pro_out.key_evidence,
-            "argument":        pro_out.argument,
+            "stance":          pro_out.stance          if pro_out else None,
+            "risk_assessment": pro_out.risk_assessment if pro_out else None,
+            "confidence":      pro_out.confidence      if pro_out else None,
+            "key_evidence":    pro_out.key_evidence    if pro_out else [],
+            "argument":        pro_out.argument        if pro_out else "Debate skipped (fast-path)",
         },
         "advocate_opp": {
-            "stance":          opp_out.stance,
-            "risk_assessment": opp_out.risk_assessment,
-            "confidence":      opp_out.confidence,
-            "key_evidence":    opp_out.key_evidence,
-            "argument":        opp_out.argument,
+            "stance":          opp_out.stance          if opp_out else None,
+            "risk_assessment": opp_out.risk_assessment if opp_out else None,
+            "confidence":      opp_out.confidence      if opp_out else None,
+            "key_evidence":    opp_out.key_evidence    if opp_out else [],
+            "argument":        opp_out.argument        if opp_out else "Debate skipped (fast-path)",
         },
         # ── Meta ──
         "elapsed_seconds": elapsed,

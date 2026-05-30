@@ -161,8 +161,19 @@ def compute_gradcam(model, image_tensor, target_class: int = None, device: str =
     acts = activations["value"]          # (1, 512, 7, 7)
     weights = grads.mean(dim=[2, 3], keepdim=True)  # (1, 512, 1, 1)
 
-    cam = (weights * acts).sum(dim=1, keepdim=True)  # (1, 1, 7, 7)
-    cam = F.relu(cam)
+    cam_raw = (weights * acts).sum(dim=1, keepdim=True)  # (1, 1, 7, 7)
+    cam_relu = F.relu(cam_raw)
+
+    # FGSM creates uniform pixel-space noise → layer4 detects it through feature
+    # suppression (negative gradients) rather than activation (positive gradients).
+    # ReLU zeros all of those out → blank blue heatmap.
+    # When ReLU discards >95% of the signal, fall back to absolute-value cam
+    # so the spatial attention is still visible.
+    if cam_relu.max() < 0.05 * cam_raw.abs().max():
+        cam = cam_raw.abs()
+    else:
+        cam = cam_relu
+
     cam = F.interpolate(cam, size=(224, 224), mode="bilinear", align_corners=False)
     cam = cam.squeeze().cpu().numpy()
     cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)

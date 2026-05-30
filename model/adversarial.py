@@ -54,33 +54,35 @@ class FGSM:
         Compute adversarial examples for a batch.
 
         Args:
-            images : (B, C, H, W) normalized input images
+            images : (B, C, H, W) normalized input images (ImageNet mean/std)
             labels : (B,)          true class indices
 
         Returns:
-            adv_images : (B, C, H, W) adversarial images (same dtype, clamped [0,1])
+            adv_images : (B, C, H, W) normalized adversarial images
         """
         self.model.eval()
+        device = next(self.model.parameters()).device
 
-        # Copy and enable grad
-        x = images.clone().detach().requires_grad_(True)
-        x = x.to(next(self.model.parameters()).device)
-        labels = labels.to(x.device)
+        mean = torch.tensor(Config.NORMALIZE_MEAN, dtype=torch.float32).view(1, 3, 1, 1).to(device)
+        std  = torch.tensor(Config.NORMALIZE_STD,  dtype=torch.float32).view(1, 3, 1, 1).to(device)
 
-        # Forward + loss
+        # Compute gradient in normalized space (model expects normalized input)
+        x = images.clone().detach().requires_grad_(True).to(device)
+        labels = labels.to(device)
+
         output = self.model(x)
         logits = output["logits"] if isinstance(output, dict) else output
         loss = self.criterion(logits, labels)
 
-        # Backward to get gradient w.r.t. input
         self.model.zero_grad()
         loss.backward()
 
-        # Gradient sign perturbation
         with torch.no_grad():
-            perturbation = self.epsilon * x.grad.sign()
-            adv_images = images.to(x.device) + perturbation
-            adv_images = torch.clamp(adv_images, 0.0, 1.0)
+            grad_sign = x.grad.sign()
+            # Apply epsilon in pixel space [0, 1]: denorm → perturb → clamp → renorm
+            img_pixel = images.to(device) * std + mean
+            adv_pixel = torch.clamp(img_pixel + self.epsilon * grad_sign, 0.0, 1.0)
+            adv_images = (adv_pixel - mean) / std
 
         return adv_images.detach()
 
@@ -116,26 +118,33 @@ class PGD:
         Compute PGD adversarial examples.
 
         Args:
-            images : (B, C, H, W) normalized input images
+            images : (B, C, H, W) normalized input images (ImageNet mean/std)
             labels : (B,)          true class indices
 
         Returns:
-            adv_images : (B, C, H, W) adversarial images, clamped [0, 1]
+            adv_images : (B, C, H, W) normalized adversarial images
         """
         self.model.eval()
         device = next(self.model.parameters()).device
         images = images.to(device)
         labels = labels.to(device)
 
-        # Random initialization within ε-ball
-        adv = images.clone().detach()
-        adv += torch.empty_like(adv).uniform_(-self.epsilon, self.epsilon)
-        adv = torch.clamp(adv, 0.0, 1.0)
+        mean = torch.tensor(Config.NORMALIZE_MEAN, dtype=torch.float32).view(1, 3, 1, 1).to(device)
+        std  = torch.tensor(Config.NORMALIZE_STD,  dtype=torch.float32).view(1, 3, 1, 1).to(device)
+
+        # Work in pixel space [0, 1] for correct epsilon semantics
+        img_pixel = images * std + mean
+
+        # Random start within ε-ball in pixel space
+        adv_pixel = img_pixel.clone().detach()
+        adv_pixel += torch.empty_like(adv_pixel).uniform_(-self.epsilon, self.epsilon)
+        adv_pixel = torch.clamp(adv_pixel, 0.0, 1.0)
 
         for _ in range(self.steps):
-            adv.requires_grad_(True)
+            # Re-normalize for model input
+            adv_norm = ((adv_pixel - mean) / std).requires_grad_(True)
 
-            output = self.model(adv)
+            output = self.model(adv_norm)
             logits = output["logits"] if isinstance(output, dict) else output
             loss = self.criterion(logits, labels)
 
@@ -143,14 +152,14 @@ class PGD:
             loss.backward()
 
             with torch.no_grad():
-                grad_sign = adv.grad.sign()
-                adv = adv + self.alpha * grad_sign
+                grad_sign = adv_norm.grad.sign()
+                adv_pixel = adv_pixel + self.alpha * grad_sign
 
-                # Project back into ε-ball around original
-                delta = torch.clamp(adv - images, -self.epsilon, self.epsilon)
-                adv = torch.clamp(images + delta, 0.0, 1.0).detach()
+                # Project back into ε-ball around original in pixel space
+                delta = torch.clamp(adv_pixel - img_pixel, -self.epsilon, self.epsilon)
+                adv_pixel = torch.clamp(img_pixel + delta, 0.0, 1.0).detach()
 
-        return adv
+        return ((adv_pixel - mean) / std).detach()
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -175,7 +184,8 @@ class AdversarialDatasetGenerator:
                  clean_loader: DataLoader,
                  output_dir: str = Config.DATA_DIR,
                  attack_types: list = None,
-                 device: str = None):
+                 device: str = None,
+                 eps_tag: str = ""):
         self.model = model
         self.loader = clean_loader
         self.output_dir = Path(output_dir)
@@ -190,13 +200,15 @@ class AdversarialDatasetGenerator:
         if "pgd" in self.attack_types:
             self.attacks["pgd"] = PGD(self.model)
 
-        # Output paths
+        # Output paths — use eps_tag to keep each epsilon run in its own folder
+        suffix = f"_{eps_tag}" if eps_tag else ""
         self.clean_dir = self.output_dir / "clean"
         self.adv_dirs = {
-            name: self.output_dir / "adversarial" / name
+            name: self.output_dir / "adversarial" / f"{name}{suffix}"
             for name in self.attacks
         }
-        self.csv_path = self.output_dir / "labels.csv"
+        csv_name = f"labels{suffix}.csv" if eps_tag else "labels.csv"
+        self.csv_path = self.output_dir / csv_name
 
     def _mkdir(self):
         self.clean_dir.mkdir(parents=True, exist_ok=True)

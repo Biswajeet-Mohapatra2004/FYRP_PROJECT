@@ -159,28 +159,49 @@ class AdvocateAgent:
         in_argument = False
         in_evidence = False
 
-        for line in lines:
-            line_stripped = line.strip()
+        used_defaults = []
 
-            if line_stripped.startswith("ARGUMENT:"):
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                if in_argument:
+                    argument += " "
+                continue
+
+            # Use partition to handle "KEY : value" and "KEY:value" equally
+            key, sep, val = stripped.partition(":")
+            key_upper = key.strip().upper()
+            val = val.strip()
+
+            if key_upper == "ARGUMENT":
                 in_argument = True
                 in_evidence = False
-                argument = line_stripped[len("ARGUMENT:"):].strip()
-            elif line_stripped.startswith("KEY_EVIDENCE:"):
+                argument = val
+            elif key_upper == "KEY_EVIDENCE":
                 in_argument = False
                 in_evidence = True
-            elif line_stripped.startswith("RISK_ASSESSMENT:"):
+            elif key_upper == "RISK_ASSESSMENT":
                 in_argument = False
                 in_evidence = False
-                risk_assessment = line_stripped[len("RISK_ASSESSMENT:"):].strip().upper()
-            elif line_stripped.startswith("CONFIDENCE:"):
+                if val.upper() in ("LOW", "MEDIUM", "HIGH"):
+                    risk_assessment = val.upper()
+            elif key_upper == "CONFIDENCE":
                 in_argument = False
                 in_evidence = False
-                confidence = line_stripped[len("CONFIDENCE:"):].strip().lower()
-            elif in_argument and line_stripped:
-                argument += " " + line_stripped
-            elif in_evidence and line_stripped.startswith("-"):
-                key_evidence.append(line_stripped[1:].strip())
+                if val.lower() in ("high", "medium", "low"):
+                    confidence = val.lower()
+            elif key_upper == "STANCE":
+                in_argument = False
+                in_evidence = False
+            elif in_argument and stripped:
+                argument += " " + stripped
+            elif in_evidence and (stripped.startswith("-") or stripped.startswith("•")):
+                key_evidence.append(stripped.lstrip("-•").strip())
+
+        if not argument:
+            used_defaults.append("argument")
+        if used_defaults:
+            logger.warning(f"[{self.role.upper()}] Parser used defaults for: {used_defaults}")
 
         return AdvocateOutput(
             role=self.role,

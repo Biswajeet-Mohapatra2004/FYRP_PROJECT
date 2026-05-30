@@ -73,7 +73,7 @@ async def analyze_image(file: UploadFile = File(...)):
             )
             
             # Send only the dashboard URL to the UI
-            result["dashboard_url"] = f"http://localhost:8000/results/{dashboard_filename}"
+            result["dashboard_url"] = f"http://localhost:8001/results/{dashboard_filename}"
             
             # Remove intermediate visualization files from the results directory
             try:
