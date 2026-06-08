@@ -2,11 +2,33 @@
    FYRP — Dashboard Script
    ============================================================ */
 
+// ── Theme toggle ─────────────────────────────────────────────
+(function initTheme() {
+    const html   = document.documentElement;
+    const btn    = document.getElementById('themeToggle');
+    const stored = localStorage.getItem('fyrp-theme');
+
+    // Apply stored preference or default to dark
+    if (stored === 'light') html.setAttribute('data-theme', 'light');
+
+    btn.addEventListener('click', () => {
+        const isLight = html.getAttribute('data-theme') === 'light';
+        const next    = isLight ? 'dark' : 'light';
+        html.setAttribute('data-theme', next);
+        localStorage.setItem('fyrp-theme', next);
+    });
+})();
+
+
 // ── Particle background ──────────────────────────────────────
 (function initParticles() {
     const canvas = document.getElementById('particleCanvas');
     const ctx = canvas.getContext('2d');
     let W, H, particles = [];
+
+    function isLight() {
+        return document.documentElement.getAttribute('data-theme') === 'light';
+    }
 
     function resize() {
         W = canvas.width  = window.innerWidth;
@@ -20,8 +42,11 @@
         this.vy = (Math.random() - 0.5) * 0.4;
         this.r  = Math.random() * 1.5 + 0.3;
         this.a  = Math.random() * 0.5 + 0.1;
-        const hues = [185, 270, 300, 220];
-        this.hue = hues[Math.floor(Math.random() * hues.length)];
+        // Dark: cyan/purple/magenta hues  |  Light: indigo/blue/violet hues
+        const darkHues  = [185, 270, 300, 220];
+        const lightHues = [210, 240, 260, 200];
+        this.hue = darkHues[Math.floor(Math.random() * darkHues.length)];
+        this.lightHue = lightHues[Math.floor(Math.random() * lightHues.length)];
     }
 
     function init() {
@@ -31,6 +56,8 @@
 
     function draw() {
         ctx.clearRect(0, 0, W, H);
+        const light = isLight();
+
         particles.forEach(p => {
             p.x += p.vx; p.y += p.vy;
             if (p.x < 0) p.x = W;
@@ -39,11 +66,16 @@
             if (p.y > H) p.y = 0;
             ctx.beginPath();
             ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-            ctx.fillStyle = `hsla(${p.hue}, 100%, 70%, ${p.a})`;
+            // Light mode: darker, more saturated dots; Dark mode: bright neon dots
+            const hue  = light ? p.lightHue : p.hue;
+            const sat  = light ? '80%' : '100%';
+            const lum  = light ? '40%' : '70%';
+            const alpha = light ? p.a * 0.55 : p.a;
+            ctx.fillStyle = `hsla(${hue}, ${sat}, ${lum}, ${alpha})`;
             ctx.fill();
         });
 
-        // Draw faint connection lines between close particles
+        // Connection lines
         for (let i = 0; i < particles.length; i++) {
             for (let j = i + 1; j < particles.length; j++) {
                 const dx = particles[i].x - particles[j].x;
@@ -53,7 +85,13 @@
                     ctx.beginPath();
                     ctx.moveTo(particles[i].x, particles[i].y);
                     ctx.lineTo(particles[j].x, particles[j].y);
-                    ctx.strokeStyle = `rgba(0,245,255,${0.06 * (1 - d/100)})`;
+                    const lineAlpha = light
+                        ? 0.08 * (1 - d/100)
+                        : 0.06 * (1 - d/100);
+                    const lineColor = light
+                        ? `rgba(99,102,241,${lineAlpha})`
+                        : `rgba(0,245,255,${lineAlpha})`;
+                    ctx.strokeStyle = lineColor;
                     ctx.lineWidth = 0.5;
                     ctx.stroke();
                 }
